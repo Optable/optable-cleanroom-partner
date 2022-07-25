@@ -384,7 +384,6 @@ BEGIN
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_match_attempts)
   (
     match_id VARCHAR,
-    match_attempt_id VARCHAR,
     match_result VARCHAR
   );
 
