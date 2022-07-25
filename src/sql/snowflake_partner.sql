@@ -355,7 +355,7 @@ BEGIN
   -- Create and populate available values table
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_match_requests)
   (
-    match_id VARCHAR,
+    match_id VARCHAR UNIQUE,
     create_time TIMESTAMP
   );
 
