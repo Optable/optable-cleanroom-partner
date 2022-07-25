@@ -290,6 +290,7 @@ BEGIN
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_approved_query_requests VARCHAR := :snowflake_partner_dcr_internal_schema || '.approved_query_requests';
   let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
+  let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
   let snowflake_partner_source_schema_dcr_rap VARCHAR := :snowflake_partner_source_schema || '.dcr_rap';
   let snowflake_partner_dcr_internal_schema_dcn_partner_new_requests VARCHAR := :snowflake_partner_dcr_internal_schema || '.dcn_partner_new_requests';
   let snowflake_partner_dcr_internal_schema_new_requests_all VARCHAR := :snowflake_partner_dcr_internal_schema || '.new_requests_all';
@@ -387,6 +388,12 @@ BEGIN
     match_result VARCHAR
   );
 
+  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_matches)
+  (
+    match_id VARCHAR,
+    match_name VARCHAR
+  );
+
   USE ROLE accountadmin;
   -- Create and apply row access policy to profiles source table
   call optable_partnership.internal_schema.create_rap(:snowflake_partner_role, :snowflake_partner_source_schema_dcr_rap, :snowflake_partner_dcr_internal_schema_approved_query_requests);
@@ -455,4 +462,31 @@ BEGIN
 
   RETURN 'Partner ' || :dcn_slug || ' is successfully connected.';
 END;
-;
+
+CREATE OR REPLACE PROCEDURE optable_partnership.public.match_create(dcn_slug VARCHAR, dcn_account_id VARCHAR, match_name VARCHAR)
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
+  let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
+  let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
+  let uuid VARCHAR := uuid_string();
+  INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_matches) VALUES (:uuid, :match_name);
+  return :uuid;
+END;
+
+CREATE OR REPLACE PROCEDURE optable_partnership.public.match_list(dcn_slug VARCHAR, dcn_account_id VARCHAR)
+RETURNS TABLE(match_id VARCHAR, match_name VARCHAR)
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
+  let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
+  let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
+  let uuid VARCHAR := uuid_string();
+  let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_matches));
+  RETURN table(res);
+END;
