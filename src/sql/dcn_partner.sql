@@ -104,6 +104,7 @@ CREATE OR REPLACE TABLE identifier($dcn_partner_dcr_shared_schema_query_requests
   request_id VARCHAR,
   target_table_name VARCHAR,
   query_template_name VARCHAR,
+  match_id VARCHAR,
   match_attempt_id VARCHAR,
   at_timestamp VARCHAR,
   request_ts TIMESTAMP_NTZ
@@ -111,6 +112,7 @@ CREATE OR REPLACE TABLE identifier($dcn_partner_dcr_shared_schema_query_requests
 
 CREATE OR REPLACE TABLE identifier($dcn_partner_dcr_shared_schema_match_attempts)
 (
+  match_id VARCHAR,
   match_attempt_id VARCHAR,
   match_result VARCHAR
 );
@@ -138,7 +140,7 @@ ALTER SHARE identifier($dcn_partner_dcr_share) ADD ACCOUNTS = identifier($snowfl
 CREATE OR REPLACE SCHEMA identifier($dcn_partner_dcr_internal_schema);
 
 -- Create query request generation stored procedure
-CREATE OR REPLACE PROCEDURE optable_partnership.public.generate_match_request(current_dcn_slug VARCHAR, current_snowflake_account_id VARCHAR, query_template_name VARCHAR, match_attempt_id VARCHAR, at_timestamp VARCHAR, wait_minutes REAL)
+CREATE OR REPLACE PROCEDURE optable_partnership.public.generate_match_request(current_dcn_slug VARCHAR, current_snowflake_account_id VARCHAR, query_template_name VARCHAR, match_id VARCHAR, match_attempt_id VARCHAR, at_timestamp VARCHAR, wait_minutes REAL)
   RETURNS VARCHAR
   LANGUAGE JAVASCRIPT
   EXECUTE AS CALLER
@@ -166,6 +168,7 @@ try {
   var dcr_db_shared_schema_name_out = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_ID + "_dcr_db.shared_schema";
 
   // Get parameters
+  var match_id = MATCH_ID;
   var match_attempt_id = MATCH_ATTEMPT_ID;
   var target_table_name = 'profiles';
   var query_template_name = QUERY_TEMPLATE_NAME;
@@ -183,12 +186,13 @@ try {
 
   // Generate the request and insert into the QUERY_REQUESTS table.
   var insert_request_sql = "INSERT INTO " + dcr_db_shared_schema_name_out + ".query_requests \
-							 (request_id, target_table_name, query_template_name, match_attempt_id, at_timestamp, request_ts) \
+							 (request_id, target_table_name, query_template_name, match_id, match_attempt_id, at_timestamp, request_ts) \
 						   VALUES \
 							 ( \
 							   '" + request_id + "', \
 							   \$\$" + target_table_name + "\$\$, \
 							   \$\$" + query_template_name + "\$\$, \
+							   \$\$" + match_id + "\$\$, \
 							   \$\$" + match_attempt_id + "\$\$, \
 							   \$\$" + at_timestamp + "\$\$, \
 							   CURRENT_TIMESTAMP() \
@@ -237,7 +241,7 @@ try {
   // Then execute the approved query.
   var approved_query_statement = snowflake.createStatement( {sqlText: query_text} );
   var approved_query_result = approved_query_statement.execute();
-  return "The other party APPROVED the query request.  Its results are now available this table: " + MATCH_ATTEMPT_ID.toUpperCase() + "_" +dcr_db_internal_schema_name.toUpperCase() + "." + target_table_name.toUpperCase();
+  return "The other party APPROVED the query request.  Its results are now available this table: " + dcr_db_internal_schema_name.toUpperCase() + "." + MATCH_ATTEMPT_ID.toUpperCase() + "_" + target_table_name.toUpperCase();
 
 }
 catch (err) {
