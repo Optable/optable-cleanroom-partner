@@ -8,8 +8,6 @@ USE warehouse optable_partnership_setup;
 
 set dcn_slug = 'bd1';
 set dcn_account_id = 'JS73429';
-set snowflake_partner_account_id = current_account();
-set snowflake_partner_username = current_user();
 
 CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_account(dcn_account_id VARCHAR);
 DELETE FROM optable_partnership.public.dcn_account;
@@ -54,205 +52,6 @@ $$
 $$
 ;
 
-call optable_partnership.public.disconnect_partner($dcn_slug, $dcn_account_id);
-
-set snowflake_partner_role = 'snowflake_partner_' || $dcn_slug || '_' || $dcn_account_id || '_role';
-set snowflake_partner_warehouse = 'snowflake_partner_' || $dcn_slug || '_' || $dcn_account_id || '_warehouse';
-set snowflake_partner_source_db = 'snowflake_partner_' || $dcn_slug || '_' || $dcn_account_id || '_source_db';
-set snowflake_partner_dcr_db = 'snowflake_partner_' || $dcn_slug || '_' || $dcn_account_id || '_dcr_db';
-set snowflake_partner_source_share = 'snowflake_partner_' || $dcn_slug || '_' || $dcn_account_id || '_source_share';
-set snowflake_partner_dcr_share = 'snowflake_partner_' || $dcn_slug || '_' || $dcn_account_id || '_dcr_share';
-set snowflake_partner_source_schema = $snowflake_partner_source_db || '.source_schema';
-set snowflake_partner_source_schema_profiles = $snowflake_partner_source_schema || '.profiles';
-set snowflake_partner_dcr_shared_schema = $snowflake_partner_dcr_db || '.shared_schema';
-set snowflake_partner_dcr_shared_schema_query_templates = $snowflake_partner_dcr_shared_schema || '.query_templates';
-set snowflake_partner_dcr_shared_schema_match_requests = $snowflake_partner_dcr_shared_schema || '.match_requests';
-set snowflake_partner_dcr_shared_schema_request_status = $snowflake_partner_dcr_shared_schema || '.request_status';
-set snowflake_partner_dcr_internal_schema = $snowflake_partner_dcr_db || '.internal_schema';
-set snowflake_partner_dcr_internal_schema_approved_query_requests = $snowflake_partner_dcr_internal_schema || '.approved_query_requests';
-set snowflake_partner_dcr_internal_schema_match_attempts = $snowflake_partner_dcr_internal_schema || '.match_attempts';
-set snowflake_partner_source_schema_dcr_rap = $snowflake_partner_source_schema || '.dcr_rap';
-set snowflake_partner_dcr_internal_schema_dcn_partner_new_requests = $snowflake_partner_dcr_internal_schema || '.dcn_partner_new_requests';
-set snowflake_partner_dcr_internal_schema_new_requests_all = $snowflake_partner_dcr_internal_schema || '.new_requests_all';
-set dcn_partner_dcr_share= $dcn_account_id || '.dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_id || '_dcr_share';
-set dcn_partner_dcr_db = 'dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_id || '_dcr_db';
-set dcn_partner_dcr_shared_schema_query_requests = $dcn_partner_dcr_db || '.shared_schema.query_requests';
-
--- Create roles
-
-USE ROLE securityadmin;
-CREATE OR REPLACE ROLE identifier($snowflake_partner_role);
-GRANT ROLE identifier($snowflake_partner_role) TO ROLE sysadmin;
-GRANT ROLE identifier($snowflake_partner_role) TO USER identifier($snowflake_partner_username);
-
--- Grant privileges to roles
-USE ROLE accountadmin;
-GRANT CREATE DATABASE ON ACCOUNT TO ROLE identifier($snowflake_partner_role);
-GRANT CREATE SHARE ON ACCOUNT TO ROLE identifier($snowflake_partner_role);
-GRANT IMPORT SHARE ON ACCOUNT TO ROLE identifier($snowflake_partner_role);
-GRANT EXECUTE TASK ON ACCOUNT TO ROLE identifier($snowflake_partner_role);
-GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE identifier($snowflake_partner_role);
-
--- Create virtual warehouse
-USE ROLE identifier($snowflake_partner_role);
-CREATE OR REPLACE WAREHOUSE identifier($snowflake_partner_warehouse) warehouse_size=xsmall;
-USE WAREHOUSE identifier($snowflake_partner_warehouse);
-
--- Create source database and schema, along with customer table populated with synthetic data
--- Note that this dataset has demographics included
-CREATE OR REPLACE DATABASE identifier($snowflake_partner_source_db);
-CREATE OR REPLACE SCHEMA identifier($snowflake_partner_source_schema);
-
-CREATE OR REPLACE TABLE identifier($snowflake_partner_source_schema_profiles)
-(
-  identifier VARCHAR NOT NULL,
-  match_attempt_id VARCHAR NOT NULL
-);
-
--- Create clean room database
-CREATE OR REPLACE DATABASE identifier($snowflake_partner_dcr_db);
-
--- Create clean room shared schema and objects
-CREATE OR REPLACE SCHEMA identifier($snowflake_partner_dcr_shared_schema);
-
--- Create and populate query template table
-CREATE OR REPLACE TABLE identifier($snowflake_partner_dcr_shared_schema_query_templates)
-(
-  query_template_name VARCHAR,
-  query_template_text VARCHAR
-);
-
-DELETE FROM identifier($snowflake_partner_dcr_shared_schema_query_templates);  -- Run this if you change any of the below queries
-INSERT INTO identifier($snowflake_partner_dcr_shared_schema_query_templates)
-VALUES ('match_attempt', $$SELECT dcn_partner.* FROM @dcn_partner_source_source_schema_profiles at(timestamp=>'@attimestamp'::timestamp_tz) dcn_partner
-INNER JOIN @snowflake_partner_source_source_schema_profiles snowflake_partner
-ON dcn_partner.identifier = snowflake_partner.identifier
-WHERE snowflake_partner.match_attempt_id = '@match_attempt_id'
-AND exists (SELECT table_name FROM @dcn_partner_source_information_schema_tables WHERE table_schema = 'SOURCE_SCHEMA' AND table_name = 'PROFILES' AND table_type = 'BASE TABLE');$$);
-
-
--- Create and populate available values table
-CREATE OR REPLACE TABLE identifier($snowflake_partner_dcr_shared_schema_match_requests)
-(
-  match_id VARCHAR,
-  match_attempt_id VARCHAR,
-  create_time TIMESTAMP
-);
-
--- Create request status table
-CREATE OR REPLACE TABLE identifier($snowflake_partner_dcr_shared_schema_request_status)
-(
-  request_id VARCHAR,
-  request_status VARCHAR,
-  target_table_name VARCHAR,
-  query_text VARCHAR,
-  request_status_ts TIMESTAMP_NTZ,
-  comments VARCHAR,
-  account_name VARCHAR
-);
-
--- Create clean room internal schema and objects
-CREATE OR REPLACE SCHEMA identifier($snowflake_partner_dcr_internal_schema);
-
--- Create approved query requests table
-CREATE OR REPLACE TABLE identifier($snowflake_partner_dcr_internal_schema_approved_query_requests)
-(
-  query_name VARCHAR,
-  query_text VARCHAR
-);
-
-CREATE OR REPLACE TABLE identifier($snowflake_partner_dcr_internal_schema_match_attempts)
-(
-  match_attempt_id VARCHAR,
-  match_result VARCHAR
-);
-
-USE ROLE accountadmin;
-CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.create_rap(snowflake_partner_role VARCHAR, dcr_rap VARCHAR, approved_query_requests VARCHAR)
-RETURNS VARCHAR
-LANGUAGE JAVASCRIPT
-EXECUTE AS CALLER
-AS
-$$
-  var statements = [
-    "USE ROLE " + SNOWFLAKE_PARTNER_ROLE,
-    "CREATE OR REPLACE ROW ACCESS POLICY " + DCR_RAP + " AS (identifier VARCHAR, match_attempt_id VARCHAR) returns boolean ->" +
-        "current_role() IN ('ACCOUNTADMIN', UPPER('" + SNOWFLAKE_PARTNER_ROLE + "'))" +
-        "OR EXISTS  (select query_text FROM " + APPROVED_QUERY_REQUESTS + " WHERE query_text=current_statement() OR query_text=sha2(current_statement()));"
-  ];
-  try {
-    for (const stmt of statements) {
-      var sql = snowflake.createStatement( {sqlText: stmt} );
-      sql.execute();
-    }
-    return "RAP created";
-  } catch (err) {
-    var result =  "Failed: Code: " + err.code + "\n  State: " + err.state;
-    result += "\n  Message: " + err.message;
-    result += "\nStack Trace:\n" + err.stackTraceTxt;
-    return result;
-  }
-$$
-;
-
--- Create and apply row access policy to profiles source table
-call optable_partnership.internal_schema.create_rap($snowflake_partner_role, $snowflake_partner_source_schema_dcr_rap, $snowflake_partner_dcr_internal_schema_approved_query_requests);
-
-USE ROLE identifier($snowflake_partner_role);
-ALTER TABLE identifier($snowflake_partner_source_schema_profiles) add row access policy identifier($snowflake_partner_source_schema_dcr_rap) on (identifier, match_attempt_id);
-
--- Create outbound shares
-CREATE OR REPLACE SHARE identifier($snowflake_partner_dcr_share);
-CREATE OR REPLACE SHARE identifier($snowflake_partner_source_share);
-
--- Grant object privileges to DCR share
-GRANT USAGE ON DATABASE identifier($snowflake_partner_dcr_db) TO SHARE identifier($snowflake_partner_dcr_share);
-GRANT USAGE ON SCHEMA identifier($snowflake_partner_dcr_shared_schema) TO SHARE identifier($snowflake_partner_dcr_share);
-GRANT SELECT ON TABLE identifier($snowflake_partner_dcr_shared_schema_query_templates) TO SHARE identifier($snowflake_partner_dcr_share);
-GRANT SELECT ON TABLE identifier($snowflake_partner_dcr_shared_schema_match_requests) TO SHARE identifier($snowflake_partner_dcr_share);
-GRANT SELECT ON TABLE identifier($snowflake_partner_dcr_shared_schema_request_status) TO SHARE identifier($snowflake_partner_dcr_share);
-
--- Grant object privileges to source share
-GRANT USAGE ON DATABASE identifier($snowflake_partner_source_db) TO SHARE identifier($snowflake_partner_source_share);
-GRANT USAGE ON SCHEMA identifier($snowflake_partner_source_schema) TO SHARE identifier($snowflake_partner_source_share);
-GRANT SELECT ON TABLE identifier($snowflake_partner_source_schema_profiles) TO SHARE identifier($snowflake_partner_source_share);
-
--- Add account to shares
--- Note use of SHARE_RESTRICTIONS clause to enable sharing between Business Critical and Enterprise account deployments
-use role accountadmin;
-ALTER SHARE identifier($snowflake_partner_dcr_share) ADD ACCOUNTS = identifier($dcn_account_id) SHARE_RESTRICTIONS=false;
-ALTER SHARE identifier($snowflake_partner_source_share) ADD ACCOUNTS = identifier($dcn_account_id) SHARE_RESTRICTIONS=false;
-USE ROLE identifier($snowflake_partner_role);
-
--- Create databases from incoming Party2 share and grant privileges
-use role accountadmin;
-CREATE OR REPLACE DATABASE identifier($dcn_partner_dcr_db) FROM SHARE identifier($dcn_partner_dcr_share);
-GRANT IMPORTED PRIVILEGES ON DATABASE identifier($dcn_partner_dcr_db) TO ROLE identifier($snowflake_partner_role);
-
--- Create Table Stream on shared query requests table
-USE ROLE identifier($snowflake_partner_role);
-CREATE OR REPLACE STREAM identifier($snowflake_partner_dcr_internal_schema_dcn_partner_new_requests)
-ON TABLE identifier($dcn_partner_dcr_shared_schema_query_requests)
-  APPEND_ONLY = TRUE
-  DATA_RETENTION_TIME_IN_DAYS = 14;
-
--- Create view to pull data from the just-created table stream
-CREATE OR REPLACE VIEW identifier($snowflake_partner_dcr_internal_schema_new_requests_all)
-AS
-SELECT * FROM
-    (SELECT request_id,
-        match_attempt_id,
-        at_timestamp,
-        target_table_name,
-        query_template_name,
-        RANK() OVER (PARTITION BY request_id ORDER BY request_ts DESC) AS current_flag
-      FROM identifier($snowflake_partner_dcr_internal_schema_dcn_partner_new_requests)
-      WHERE METADATA$ACTION = 'INSERT'
-      ) a
-  WHERE a.current_flag = 1
-;
-
-USE ROLE accountadmin;
 CREATE OR REPLACE PROCEDURE optable_partnership.public.list_partners()
 RETURNS TABLE(dcn_account_id VARCHAR, snowflake_partner_role VARCHAR)
 LANGUAGE SQL
@@ -451,4 +250,219 @@ $$
 $$
 ;
 
-INSERT INTO optable_partnership.public.dcn_partners (dcn_slug, snowflake_partner_role) VALUES ($dcn_slug, $snowflake_partner_role);
+CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.create_rap(snowflake_partner_role VARCHAR, dcr_rap VARCHAR, approved_query_requests VARCHAR)
+RETURNS VARCHAR
+LANGUAGE JAVASCRIPT
+EXECUTE AS CALLER
+AS
+$$
+  var statements = [
+    "USE ROLE " + SNOWFLAKE_PARTNER_ROLE,
+    "CREATE OR REPLACE ROW ACCESS POLICY " + DCR_RAP + " AS (identifier VARCHAR, match_attempt_id VARCHAR) returns boolean ->" +
+        "current_role() IN ('ACCOUNTADMIN', UPPER('" + SNOWFLAKE_PARTNER_ROLE + "'))" +
+        "OR EXISTS  (select query_text FROM " + APPROVED_QUERY_REQUESTS + " WHERE query_text=current_statement() OR query_text=sha2(current_statement()));"
+  ];
+  try {
+    for (const stmt of statements) {
+      var sql = snowflake.createStatement( {sqlText: stmt} );
+      sql.execute();
+    }
+    return "RAP created";
+  } catch (err) {
+    var result =  "Failed: Code: " + err.code + "\n  State: " + err.state;
+    result += "\n  Message: " + err.message;
+    result += "\nStack Trace:\n" + err.stackTraceTxt;
+    return result;
+  }
+$$
+;
+
+call optable_partnership.public.disconnect_partner($dcn_slug, $dcn_account_id);
+
+CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_connect(dcn_slug VARCHAR, dcn_account_id VARCHAR)
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  let snowflake_partner_account_id VARCHAR := current_account();
+  let snowflake_partner_username VARCHAR := current_user();
+  let snowflake_partner_role VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_role';
+  let snowflake_partner_warehouse VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_warehouse';
+  let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_source_db';
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
+  let snowflake_partner_source_share VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_source_share';
+  let snowflake_partner_dcr_share VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_share';
+  let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
+  let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
+  let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
+  let snowflake_partner_dcr_shared_schema_query_templates VARCHAR := :snowflake_partner_dcr_shared_schema || '.query_templates';
+  let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
+  let snowflake_partner_dcr_shared_schema_request_status VARCHAR := :snowflake_partner_dcr_shared_schema || '.request_status';
+  let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
+  let snowflake_partner_dcr_internal_schema_approved_query_requests VARCHAR := :snowflake_partner_dcr_internal_schema || '.approved_query_requests';
+  let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
+  let snowflake_partner_source_schema_dcr_rap VARCHAR := :snowflake_partner_source_schema || '.dcr_rap';
+  let snowflake_partner_dcr_internal_schema_dcn_partner_new_requests VARCHAR := :snowflake_partner_dcr_internal_schema || '.dcn_partner_new_requests';
+  let snowflake_partner_dcr_internal_schema_new_requests_all VARCHAR := :snowflake_partner_dcr_internal_schema || '.new_requests_all';
+  let dcn_partner_dcr_share VARCHAR := :dcn_account_id || '.dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_share';
+  let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_db';
+  let dcn_partner_dcr_shared_schema_query_requests VARCHAR := :dcn_partner_dcr_db || '.shared_schema.query_requests';
+
+  -- Create roles
+
+  USE ROLE securityadmin;
+  CREATE OR REPLACE ROLE identifier(:snowflake_partner_role);
+  GRANT ROLE identifier(:snowflake_partner_role) TO ROLE sysadmin;
+  GRANT ROLE identifier(:snowflake_partner_role) TO USER identifier(:snowflake_partner_username);
+
+  -- Grant privileges to roles
+  USE ROLE accountadmin;
+  GRANT CREATE DATABASE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
+  GRANT CREATE SHARE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
+  GRANT IMPORT SHARE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
+  GRANT EXECUTE TASK ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
+  GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
+
+  -- Create virtual warehouse
+  USE ROLE identifier(:snowflake_partner_role);
+  CREATE OR REPLACE WAREHOUSE identifier(:snowflake_partner_warehouse) warehouse_size=xsmall;
+  USE WAREHOUSE identifier(:snowflake_partner_warehouse);
+
+  -- Create source database and schema, along with customer table populated with synthetic data
+  -- Note that this dataset has demographics included
+  CREATE OR REPLACE DATABASE identifier(:snowflake_partner_source_db);
+  CREATE OR REPLACE SCHEMA identifier(:snowflake_partner_source_schema);
+
+  CREATE OR REPLACE TABLE identifier(:snowflake_partner_source_schema_profiles)
+  (
+    identifier VARCHAR NOT NULL,
+    match_attempt_id VARCHAR NOT NULL
+  );
+
+  -- Create clean room database
+  CREATE OR REPLACE DATABASE identifier(:snowflake_partner_dcr_db);
+
+  -- Create clean room shared schema and objects
+  CREATE OR REPLACE SCHEMA identifier(:snowflake_partner_dcr_shared_schema);
+
+  -- Create and populate query template table
+  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_query_templates)
+  (
+    query_template_name VARCHAR,
+    query_template_text VARCHAR
+  );
+
+  DELETE FROM identifier(:snowflake_partner_dcr_shared_schema_query_templates);  -- Run this if you change any of the below queries
+  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_query_templates)
+  VALUES ('match_attempt', $$SELECT dcn_partner.* FROM @dcn_partner_source_source_schema_profiles at(timestamp=>'@attimestamp'::timestamp_tz) dcn_partner
+  INNER JOIN @snowflake_partner_source_source_schema_profiles snowflake_partner
+  ON dcn_partner.identifier = snowflake_partner.identifier
+  WHERE snowflake_partner.match_attempt_id = '@match_attempt_id'
+  AND exists (SELECT table_name FROM @dcn_partner_source_information_schema_tables WHERE table_schema = 'SOURCE_SCHEMA' AND table_name = 'PROFILES' AND table_type = 'BASE TABLE');$$);
+
+
+  -- Create and populate available values table
+  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_match_requests)
+  (
+    match_id VARCHAR,
+    match_attempt_id VARCHAR,
+    create_time TIMESTAMP
+  );
+
+  -- Create request status table
+  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_request_status)
+  (
+    request_id VARCHAR,
+    request_status VARCHAR,
+    target_table_name VARCHAR,
+    query_text VARCHAR,
+    request_status_ts TIMESTAMP_NTZ,
+    comments VARCHAR,
+    account_name VARCHAR
+  );
+
+  -- Create clean room internal schema and objects
+  CREATE OR REPLACE SCHEMA identifier(:snowflake_partner_dcr_internal_schema);
+
+  -- Create approved query requests table
+  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_approved_query_requests)
+  (
+    query_name VARCHAR,
+    query_text VARCHAR
+  );
+
+  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_match_attempts)
+  (
+    match_attempt_id VARCHAR,
+    match_result VARCHAR
+  );
+
+  USE ROLE accountadmin;
+  -- Create and apply row access policy to profiles source table
+  call optable_partnership.internal_schema.create_rap(:snowflake_partner_role, :snowflake_partner_source_schema_dcr_rap, :snowflake_partner_dcr_internal_schema_approved_query_requests);
+
+  USE ROLE identifier(:snowflake_partner_role);
+  ALTER TABLE identifier(:snowflake_partner_source_schema_profiles) add row access policy identifier(:snowflake_partner_source_schema_dcr_rap) on (identifier, match_attempt_id);
+
+  let share_stmts ARRAY := [
+    -- Create outbound shares
+    'CREATE OR REPLACE SHARE ' || :snowflake_partner_dcr_share,
+    'CREATE OR REPLACE SHARE ' || :snowflake_partner_source_share,
+    -- Grant object privileges to DCR share
+    'GRANT USAGE ON DATABASE ' || :snowflake_partner_dcr_db || ' TO SHARE ' || :snowflake_partner_dcr_share,
+    'GRANT USAGE ON SCHEMA ' || :snowflake_partner_dcr_shared_schema || ' TO SHARE ' || :snowflake_partner_dcr_share,
+    'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_query_templates || ' TO SHARE ' || :snowflake_partner_dcr_share,
+    'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_match_requests || ' TO SHARE ' || :snowflake_partner_dcr_share,
+    'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_request_status || ' TO SHARE ' || :snowflake_partner_dcr_share,
+
+    -- Grant object privileges to source share
+    'GRANT USAGE ON DATABASE ' || :snowflake_partner_source_db || ' TO SHARE ' || :snowflake_partner_source_share,
+    'GRANT USAGE ON SCHEMA ' || :snowflake_partner_source_schema || ' TO SHARE ' || :snowflake_partner_source_share,
+    'GRANT SELECT ON TABLE ' || :snowflake_partner_source_schema_profiles || ' TO SHARE ' ||  :snowflake_partner_source_share,
+
+    -- Add account to shares
+    -- Note use of SHARE_RESTRICTIONS clause to enable sharing between Business Critical and Enterprise account deployments
+    'USE ROLE accountadmin',
+    'ALTER SHARE ' || :snowflake_partner_dcr_share || ' ADD ACCOUNTS = ' || :dcn_account_id || ' SHARE_RESTRICTIONS=false',
+    'ALTER SHARE ' || :snowflake_partner_source_share || ' ADD ACCOUNTS = ' || :dcn_account_id || ' SHARE_RESTRICTIONS=false',
+
+    -- Create databases from incoming Party2 share and grant privileges
+    'CREATE OR REPLACE DATABASE ' || :dcn_partner_dcr_db || ' FROM SHARE ' || :dcn_partner_dcr_share,
+    'GRANT IMPORTED PRIVILEGES ON DATABASE ' || :dcn_partner_dcr_db || ' TO ROLE ' || :snowflake_partner_role
+ ];
+
+ FOR i IN 1 TO array_size(:share_stmts) DO
+   EXECUTE IMMEDIATE replace(:share_stmts[i-1], '"', '');
+ END FOR;
+
+  -- Create Table Stream on shared query requests table
+  USE ROLE identifier(:snowflake_partner_role);
+  CREATE OR REPLACE STREAM identifier(:snowflake_partner_dcr_internal_schema_dcn_partner_new_requests)
+  ON TABLE identifier(:dcn_partner_dcr_shared_schema_query_requests)
+    APPEND_ONLY = TRUE
+    DATA_RETENTION_TIME_IN_DAYS = 14;
+
+  -- Create view to pull data from the just-created table stream
+  CREATE OR REPLACE VIEW identifier(:snowflake_partner_dcr_internal_schema_new_requests_all)
+  AS
+  SELECT * FROM
+      (SELECT request_id,
+          match_attempt_id,
+          at_timestamp,
+          target_table_name,
+          query_template_name,
+          RANK() OVER (PARTITION BY request_id ORDER BY request_ts DESC) AS current_flag
+        FROM identifier(:snowflake_partner_dcr_internal_schema_dcn_partner_new_requests)
+        WHERE METADATA$ACTION = 'INSERT'
+        ) a
+    WHERE a.current_flag = 1
+  ;
+
+  USE ROLE accountadmin;
+
+  INSERT INTO optable_partnership.public.dcn_partners (dcn_slug, snowflake_partner_role) VALUES (:dcn_slug, :snowflake_partner_role);
+
+  RETURN 'Partner ' || :dcn_slug || ' is successfully connected.';
+END;
+;
