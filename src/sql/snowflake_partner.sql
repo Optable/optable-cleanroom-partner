@@ -6,9 +6,6 @@ CREATE SCHEMA IF NOT EXISTS optable_partnership.internal_schema;
 CREATE OR REPLACE WAREHOUSE optable_partnership_setup warehouse_size=xsmall;
 USE warehouse optable_partnership_setup;
 
-set dcn_slug = 'bd1';
-set dcn_account_id = 'JS73429';
-
 CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_account(dcn_account_id VARCHAR);
 DELETE FROM optable_partnership.public.dcn_account;
 INSERT INTO optable_partnership.public.dcn_account VALUES($dcn_account_id);
@@ -99,13 +96,6 @@ $$
     var source_db_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_source_db";
     var dcr_db_internal_schema_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_dcr_db.internal_schema";
     var dcr_db_shared_schema_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_dcr_db.shared_schema";
-
-    var set_session_variable_stmt = snowflake.createStatement( {sqlText: "SET snowflake_partner_dcr_internal_schema_new_requests_all = '" + dcr_db_internal_schema_name + "_" + dcn_account_id + ".new_requests_all'"});
-    set_session_variable_stmt.execute();
-
-    var set_session_variable_stmt = snowflake.createStatement( {sqlText: "SET snowflake_partner_dcr_internal_schema_dcn_partner_new_requests = '" + dcr_db_internal_schema_name + ".dcn_partner_new_requests'"});
-    set_session_variable_stmt.execute();
-
 
     var minimum_record_fetch_threshold = 3;
     var completion_msg = "Finished query validation.";
