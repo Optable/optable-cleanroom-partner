@@ -7,11 +7,10 @@ CREATE OR REPLACE WAREHOUSE optable_partnership_setup warehouse_size=xsmall;
 USE warehouse optable_partnership_setup;
 
 CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_account(dcn_account_id VARCHAR);
-DELETE FROM optable_partnership.public.dcn_account;
-INSERT INTO optable_partnership.public.dcn_account VALUES($dcn_account_id);
+
 CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_partners(dcn_slug VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL);
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.disconnect_partner(current_dcn_slug VARCHAR, current_dcn_account_id VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_disconnect(current_dcn_slug VARCHAR, current_dcn_account_id VARCHAR)
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
 EXECUTE AS CALLER
@@ -45,12 +44,12 @@ $$
     result += "\nStack Trace:\n" + err.stackTraceTxt;
     return result;
   }
-  return 'Disconnected';
+  return 'Partner ' + CURRENT_DCN_SLUG + ' is disconnected';
 $$
 ;
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.list_partners()
-RETURNS TABLE(dcn_account_id VARCHAR, snowflake_partner_role VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_list()
+RETURNS TABLE(dcn_slug VARCHAR, snowflake_partner_role VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
@@ -65,7 +64,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.validate_query(current_dcn_slug VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.validate_query(current_dcn_slug VARCHAR)
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
 EXECUTE AS CALLER
@@ -116,7 +115,7 @@ $$
     // Note that its name incorporates the UUID fetched above
     var temp_table_name = dcr_db_internal_schema_name + ".requests_temp_" + UUID_str;
     var create_temp_table_sql = "CREATE OR REPLACE TEMPORARY TABLE " + temp_table_name + " ( \
-                                   request_id VARCHAR, match_attempt_id VARCHAR, at_timestamp VARCHAR, \
+                                   request_id VARCHAR, match_id VARCHAR, match_attempt_id VARCHAR, at_timestamp VARCHAR, \
                                    target_table_name VARCHAR, query_template_name VARCHAR);";
     var create_temp_table_statement = snowflake.createStatement( {sqlText: create_temp_table_sql} );
     var create_temp_table_results = create_temp_table_statement.execute();
@@ -125,13 +124,13 @@ $$
     // Note that records are fetched from the NEW_REQUESTS_ALL view, which is built on a Table Stream object.
     // This will cause the Table Stream's offset to be moved forward since a committed DML operation takes place here.
     var insert_temp_table_sql = "INSERT INTO " + temp_table_name + " \
-                                 SELECT request_id, match_attempt_id, at_timestamp, target_table_name, query_template_name \
+                                 SELECT request_id, match_id, match_attempt_id, at_timestamp, target_table_name, query_template_name \
                                  FROM " + dcr_db_internal_schema_name + ".new_requests_all;";
     var insert_temp_table_statement = snowflake.createStatement( {sqlText: insert_temp_table_sql} );
     var insert_temp_table_results = insert_temp_table_statement.execute();
 
     // We're now ready to fetch query requests from that temporary table.
-    var query_requests_sql = "SELECT request_id, match_attempt_id, at_timestamp::string, target_table_name, query_template_name \
+    var query_requests_sql = "SELECT request_id, match_id, match_attempt_id, at_timestamp::string, target_table_name, query_template_name \
                         FROM " + temp_table_name + ";";
     var query_requests_statement = snowflake.createStatement( {sqlText: query_requests_sql} );
     var query_requests_result = query_requests_statement.execute();
@@ -145,10 +144,11 @@ $$
       var request_status = "DECLINED";
 
       var request_id = query_requests_result.getColumnValue(1);
-      var match_attempt_id = query_requests_result.getColumnValue(2);
-      var at_timestamp = query_requests_result.getColumnValue(3);
-      var target_table_name = query_requests_result.getColumnValue(4);
-      var query_template_name = query_requests_result.getColumnValue(5);
+      var match_id = query_requests_result.getColumnValue(2);
+      var match_attempt_id = query_requests_result.getColumnValue(3);
+      var at_timestamp = query_requests_result.getColumnValue(4);
+      var target_table_name = query_requests_result.getColumnValue(5);
+      var query_template_name = query_requests_result.getColumnValue(6);
 
       // Validate the AT_TIMESTAMP for this query request.
       // Note that it must specify a timestamp from the past.
@@ -187,7 +187,7 @@ $$
 
           // First, build the approved query from the template as a CTAS...
           approved_query_text = "CREATE OR REPLACE TABLE " + match_attempt_id + "_" + target_table_name + " AS " + query_text;
-          approved_query_text = approved_query_text.replace(/@match_attempt_id/g, match_attempt_id);
+          approved_query_text = approved_query_text.replace(/@match_id/g, match_id);
           approved_query_text = approved_query_text.replace(/@threshold/g, minimum_record_fetch_threshold);
           approved_query_text = approved_query_text.replace(/@attimestamp/g, at_timestamp);
           approved_query_text = approved_query_text.replace(/@snowflake_partner_source_source_schema_profiles/g, "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_source_db.source_schema.profiles");
@@ -248,7 +248,7 @@ AS
 $$
   var statements = [
     "USE ROLE " + SNOWFLAKE_PARTNER_ROLE,
-    "CREATE OR REPLACE ROW ACCESS POLICY " + DCR_RAP + " AS (identifier VARCHAR, match_attempt_id VARCHAR) returns boolean ->" +
+    "CREATE OR REPLACE ROW ACCESS POLICY " + DCR_RAP + " AS (identifier VARCHAR, match_id VARCHAR) returns boolean ->" +
         "current_role() IN ('ACCOUNTADMIN', UPPER('" + SNOWFLAKE_PARTNER_ROLE + "'))" +
         "OR EXISTS  (select query_text FROM " + APPROVED_QUERY_REQUESTS + " WHERE query_text=current_statement() OR query_text=sha2(current_statement()));"
   ];
@@ -266,8 +266,6 @@ $$
   }
 $$
 ;
-
-call optable_partnership.public.disconnect_partner($dcn_slug, $dcn_account_id);
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_connect(dcn_slug VARCHAR, dcn_account_id VARCHAR)
 RETURNS VARCHAR
@@ -299,6 +297,8 @@ BEGIN
   let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_db';
   let dcn_partner_dcr_shared_schema_query_requests VARCHAR := :dcn_partner_dcr_db || '.shared_schema.query_requests';
 
+  DELETE FROM optable_partnership.public.dcn_account;
+  INSERT INTO optable_partnership.public.dcn_account VALUES(:dcn_account_id);
   -- Create roles
 
   USE ROLE securityadmin;
@@ -327,7 +327,7 @@ BEGIN
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_source_schema_profiles)
   (
     identifier VARCHAR NOT NULL,
-    match_attempt_id VARCHAR NOT NULL
+    match_id VARCHAR NOT NULL
   );
 
   -- Create clean room database
@@ -348,7 +348,7 @@ BEGIN
   VALUES ('match_attempt', $$SELECT dcn_partner.* FROM @dcn_partner_source_source_schema_profiles at(timestamp=>'@attimestamp'::timestamp_tz) dcn_partner
   INNER JOIN @snowflake_partner_source_source_schema_profiles snowflake_partner
   ON dcn_partner.identifier = snowflake_partner.identifier
-  WHERE snowflake_partner.match_attempt_id = '@match_attempt_id'
+  WHERE snowflake_partner.match_id = '@match_id'
   AND exists (SELECT table_name FROM @dcn_partner_source_information_schema_tables WHERE table_schema = 'SOURCE_SCHEMA' AND table_name = 'PROFILES' AND table_type = 'BASE TABLE');$$);
 
 
@@ -356,7 +356,6 @@ BEGIN
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_match_requests)
   (
     match_id VARCHAR,
-    match_attempt_id VARCHAR,
     create_time TIMESTAMP
   );
 
@@ -384,6 +383,7 @@ BEGIN
 
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_match_attempts)
   (
+    match_id VARCHAR,
     match_attempt_id VARCHAR,
     match_result VARCHAR
   );
@@ -393,7 +393,7 @@ BEGIN
   call optable_partnership.internal_schema.create_rap(:snowflake_partner_role, :snowflake_partner_source_schema_dcr_rap, :snowflake_partner_dcr_internal_schema_approved_query_requests);
 
   USE ROLE identifier(:snowflake_partner_role);
-  ALTER TABLE identifier(:snowflake_partner_source_schema_profiles) add row access policy identifier(:snowflake_partner_source_schema_dcr_rap) on (identifier, match_attempt_id);
+  ALTER TABLE identifier(:snowflake_partner_source_schema_profiles) add row access policy identifier(:snowflake_partner_source_schema_dcr_rap) on (identifier, match_id);
 
   let share_stmts ARRAY := [
     -- Create outbound shares
@@ -438,6 +438,7 @@ BEGIN
   AS
   SELECT * FROM
       (SELECT request_id,
+          match_id,
           match_attempt_id,
           at_timestamp,
           target_table_name,
