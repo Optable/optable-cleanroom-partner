@@ -515,3 +515,23 @@ BEGIN
   let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_matches));
   RETURN table(res);
 END;
+
+CREATE OR REPLACE PROCEDURE optable_partnership.public.match_get_results(dcn_slug VARCHAR, match_id VARCHAR)
+RETURNS TABLE(match_id VARCHAR, match_result VARCHAR)
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
+  let c1 cursor for account_res;
+  let dcn_account_id VARCHAR := 'dummy';
+  for row_variable in c1 do
+    dcn_account_id := row_variable.dcn_account_id;
+  end for;
+
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
+  let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
+  let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
+  let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :match_id);
+  return table(res);
+END;
