@@ -6,22 +6,25 @@ CREATE SCHEMA IF NOT EXISTS optable_partnership.internal_schema;
 CREATE OR REPLACE WAREHOUSE optable_partnership_setup warehouse_size=xsmall;
 USE warehouse optable_partnership_setup;
 
-CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_account(dcn_account_id VARCHAR);
+CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_partners(dcn_slug VARCHAR NOT NULL, dcn_account_id VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL);
 
-CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_partners(dcn_slug VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL);
-
-CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_disconnect(current_dcn_slug VARCHAR, current_dcn_account_id VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_disconnect(current_dcn_slug VARCHAR)
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
 EXECUTE AS CALLER
 AS
 $$
-  var snowflake_partner_source_share = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_DCN_ACCOUNT_ID + "_source_share";
-  var snowflake_partner_dcr_share = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_DCN_ACCOUNT_ID + "_dcr_share";
-  var snowflake_partner_source_db = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_DCN_ACCOUNT_ID + "_source_db";
-  var snowflake_partner_dcr_db = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_DCN_ACCOUNT_ID + "_dcr_db";
-  var snowflake_partner_role = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_DCN_ACCOUNT_ID + "_role";
-  var snowflake_partner_warehouse = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_DCN_ACCOUNT_ID + "_warehouse";
+  var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CRRENT_DCN_SLUG + "' LIMIT 1"} );
+  var dcn_account_result = dcn_account_stmt.execute();
+  dcn_account_result.next();
+  var dcn_account_id = dcn_account_result.getColumnValue(1);
+
+  var snowflake_partner_source_share = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_source_share";
+  var snowflake_partner_dcr_share = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_dcr_share";
+  var snowflake_partner_source_db = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_source_db";
+  var snowflake_partner_dcr_db = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_dcr_db";
+  var snowflake_partner_role = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_role";
+  var snowflake_partner_warehouse = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_warehouse";
 
   var statements = [
     "USE ROLE accountadmin",
@@ -49,7 +52,7 @@ $$
 ;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_list()
-RETURNS TABLE(dcn_slug VARCHAR, snowflake_partner_role VARCHAR)
+RETURNS TABLE(dcn_slug VARCHAR, dcn_account_id VARCHAR, snowflake_partner_role VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
@@ -87,7 +90,7 @@ $$
     current_account_result.next();
     var snowflake_account_id = current_account_result.getColumnValue(1);
 
-    var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_id FROM optable_partnership.public.dcn_account LIMIT 1"} );
+    var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CRRENT_DCN_SLUG + "' LIMIT 1"} );
     var dcn_account_result = dcn_account_stmt.execute();
     dcn_account_result.next();
     var dcn_account_id = dcn_account_result.getColumnValue(1);
@@ -267,12 +270,20 @@ $$
 $$
 ;
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_connect(dcn_slug VARCHAR, dcn_account_id VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_connect(dcn_slug VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
+
+  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :crrent_dcn_slug LIMIT 1);
+  let c1 cursor for account_res;
+  let dcn_account_id VARCHAR := 'dummy';
+  for row_variable in c1 do
+    dcn_account_id := row_variable.dcn_account_id;
+  end for;
+
   let snowflake_partner_account_id VARCHAR := current_account();
   let snowflake_partner_username VARCHAR := current_user();
   let snowflake_partner_role VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_role';
@@ -298,8 +309,6 @@ BEGIN
   let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_db';
   let dcn_partner_dcr_shared_schema_query_requests VARCHAR := :dcn_partner_dcr_db || '.shared_schema.query_requests';
 
-  DELETE FROM optable_partnership.public.dcn_account;
-  INSERT INTO optable_partnership.public.dcn_account VALUES(:dcn_account_id);
   -- Create roles
 
   USE ROLE securityadmin;
@@ -458,17 +467,25 @@ BEGIN
 
   USE ROLE accountadmin;
 
-  INSERT INTO optable_partnership.public.dcn_partners (dcn_slug, snowflake_partner_role) VALUES (:dcn_slug, :snowflake_partner_role);
+  DELETE FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug;
+  INSERT INTO optable_partnership.public.dcn_partners (dcn_slug, dcn_account_id, snowflake_partner_role) VALUES (:dcn_slug, :dcn_account_id, :snowflake_partner_role);
 
   RETURN 'Partner ' || :dcn_slug || ' is successfully connected.';
 END;
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.match_create(dcn_slug VARCHAR, dcn_account_id VARCHAR, match_name VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.public.match_create(dcn_slug VARCHAR, match_name VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
+  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :crrent_dcn_slug LIMIT 1);
+  let c1 cursor for account_res;
+  let dcn_account_id VARCHAR := 'dummy';
+  for row_variable in c1 do
+    dcn_account_id := row_variable.dcn_account_id;
+  end for;
+
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
@@ -477,12 +494,19 @@ BEGIN
   return :uuid;
 END;
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.match_list(dcn_slug VARCHAR, dcn_account_id VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.public.match_list(dcn_slug VARCHAR)
 RETURNS TABLE(match_id VARCHAR, match_name VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
+  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :crrent_dcn_slug LIMIT 1);
+  let c1 cursor for account_res;
+  let dcn_account_id VARCHAR := 'dummy';
+  for row_variable in c1 do
+    dcn_account_id := row_variable.dcn_account_id;
+  end for;
+
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
