@@ -366,6 +366,7 @@ BEGIN
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_match_requests)
   (
     match_id VARCHAR UNIQUE,
+    name VARCHAR UNIQUE,
     create_time TIMESTAMP
   );
 
@@ -474,7 +475,7 @@ BEGIN
 END;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_create(dcn_slug VARCHAR, match_name VARCHAR)
-RETURNS VARCHAR
+RETURNS TABLE(match_id VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
@@ -489,9 +490,10 @@ BEGIN
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
-  let uuid VARCHAR := uuid_string();
+  let uuid := uuid_string();
   INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_matches) VALUES (:uuid, :match_name);
-  return :uuid;
+  let res RESULTSET := (SELECT match_id FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :uuid);
+  return table(res);
 END;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_list(dcn_slug VARCHAR)
@@ -510,7 +512,6 @@ BEGIN
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
-  let uuid VARCHAR := uuid_string();
   let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_matches));
   RETURN table(res);
 END;
