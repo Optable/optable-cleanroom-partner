@@ -362,7 +362,7 @@ BEGIN
   AND exists (SELECT table_name FROM @dcn_partner_source_information_schema_tables WHERE table_schema = 'SOURCE_SCHEMA' AND table_name = 'PROFILES' AND table_type = 'BASE TABLE');$$);
 
 
-  -- Create and populate available values table
+  -- Create a table for match_requests
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_match_requests)
   (
     match_id VARCHAR UNIQUE,
@@ -395,7 +395,7 @@ BEGIN
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_match_attempts)
   (
     match_id VARCHAR,
-    match_result VARCHAR
+    match_result VARIANT
   );
 
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_matches)
@@ -516,15 +516,50 @@ BEGIN
   RETURN table(res);
 END;
 
+CREATE OR REPLACE PROCEDURE optable_partnership.public.match_run(dcn_slug VARCHAR, match_id VARCHAR)
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :crrent_dcn_slug LIMIT 1);
+  let c1 cursor for account_res;
+  let dcn_account_id VARCHAR := 'dummy';
+  for row_variable in c1 do
+    dcn_account_id := row_variable.dcn_account_id;
+  end for;
+
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
+  let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
+  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
+  let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
+  let snowflake_partner_dcr_shared_internal_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
+  let snowflake_partner_dcr_shared_internal_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
+
+  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_matches) VALUES(:match_id, current_timestamp());
+
+  -- Schedule validator task
+  CREATE TASK IF NOT EXISTS identifier(:snowflake_partner_dcr_shared_internal_validator)
+    SCHEDULE = 'USING CRON * * * * * UTC'
+  AS
+  call optable_partnership.internal_schema.validate_query(:dcn_slug);
+
+  -- Schedule a task to fetch match results from the DCN
+  CREATE TASK IF NOT EXISTS identifier(:snowflake_partner_dcr_shared_internal_fetcher)
+    SCHEDULE = 'USING CRON * * * * * UTC'
+  AS
+  call optable_partnership.internal_schema.fetch_match_results(:dcn_slug);
+END;
+
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_get_results(dcn_slug VARCHAR, match_id VARCHAR)
-RETURNS TABLE(match_id VARCHAR, match_result VARCHAR)
+RETURNS TABLE(match_id VARCHAR, match_result VARIANT)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
   let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
   let c1 cursor for account_res;
-  let dcn_account_id VARCHAR := 'dummy';
+  let dcn_account_id VARCHAR := '';
   for row_variable in c1 do
     dcn_account_id := row_variable.dcn_account_id;
   end for;

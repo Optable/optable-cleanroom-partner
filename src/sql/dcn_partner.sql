@@ -114,7 +114,7 @@ CREATE OR REPLACE TABLE identifier($dcn_partner_dcr_shared_schema_match_attempts
 (
   match_id VARCHAR,
   match_attempt_id VARCHAR,
-  match_result VARCHAR
+  match_result VARIANT
 );
 
 -- Enable change tracking on the query requests table
