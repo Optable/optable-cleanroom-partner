@@ -7,6 +7,9 @@ CREATE OR REPLACE WAREHOUSE optable_partnership_setup warehouse_size=xsmall;
 USE warehouse optable_partnership_setup;
 
 CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_partners(dcn_slug VARCHAR NOT NULL, dcn_account_id VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL);
+CREATE TABLE IF NOT EXISTS optable_partnership.public.version(version VARCHAR NOT NULL);
+DELETE FROM optable_partnership.public.version;
+INSERT INTO optable_partnership.public.version VALUES ('v0.0.1');
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_disconnect(current_dcn_slug VARCHAR)
 RETURNS VARCHAR
@@ -568,5 +571,15 @@ BEGIN
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
   let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :match_id);
+  return table(res);
+END;
+
+CREATE OR REPLACE PROCEDURE optable_partnership.public.version()
+RETURNS TABLE(version VARCHAR)
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  let res RESULTSET := (SELECT version FROM optable_partnership.public.version);
   return table(res);
 END;
