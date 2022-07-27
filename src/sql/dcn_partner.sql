@@ -114,12 +114,19 @@ CREATE OR REPLACE TABLE identifier($dcn_partner_dcr_shared_schema_match_attempts
 (
   match_id VARCHAR,
   match_attempt_id VARCHAR,
-  match_result VARIANT
+  match_result VARIANT,
+  attempt_ts TIMESTAMP_NTZ
 );
 
 -- Enable change tracking on the query requests table
 -- This will be used by the PARTY1_DCR_DB.INTERNAL_SCHEMA.PARTY2_NEW_REQUESTS Table Stream
 ALTER TABLE identifier($dcn_partner_dcr_shared_schema_query_requests)
+SET CHANGE_TRACKING = TRUE
+    DATA_RETENTION_TIME_IN_DAYS = 14;
+
+-- Enable change tracking on the match_attempts table
+-- This will be used by the PARTY1_DCR_DB.INTERNAL_SCHEMA.PARTY2_NEW_MATCH_ATTEMPTS Table Stream
+ALTER TABLE identifier($dcn_partner_dcr_shared_schema_match_attempts)
 SET CHANGE_TRACKING = TRUE
     DATA_RETENTION_TIME_IN_DAYS = 14;
 
