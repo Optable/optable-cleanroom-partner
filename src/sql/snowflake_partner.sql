@@ -308,6 +308,9 @@ BEGIN
   let snowflake_partner_source_schema_dcr_rap VARCHAR := :snowflake_partner_source_schema || '.dcr_rap';
   let snowflake_partner_dcr_internal_schema_dcn_partner_new_requests VARCHAR := :snowflake_partner_dcr_internal_schema || '.dcn_partner_new_requests';
   let snowflake_partner_dcr_internal_schema_new_requests_all VARCHAR := :snowflake_partner_dcr_internal_schema || '.new_requests_all';
+  let snowflake_partner_dcr_internal_schema_dcn_partner_new_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.dcn_partner_match_attempts';
+  let snowflake_partner_dcr_internal_schema_new_match_attempts_all VARCHAR := :snowflake_partner_dcr_internal_schema || '.new_match_attempts_all';
+  let snowflake_partner_dcr_internal_schema_pending_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.pending_match_attempts';
   let dcn_partner_dcr_share VARCHAR := :dcn_account_id || '.dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_share';
   let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_db';
   let dcn_partner_dcr_shared_schema_query_requests VARCHAR := :dcn_partner_dcr_db || '.shared_schema.query_requests';
@@ -398,6 +401,14 @@ BEGIN
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_match_attempts)
   (
     match_id VARCHAR,
+    match_attempt_id VARCHAR,
+    match_result VARIANT
+  );
+
+  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts)
+  (
+    match_id VARCHAR,
+    match_attempt_id VARCHAR,
     match_result VARIANT
   );
 
@@ -462,6 +473,28 @@ BEGIN
           at_timestamp,
           target_table_name,
           query_template_name,
+          RANK() OVER (PARTITION BY request_id ORDER BY request_ts DESC) AS current_flag
+        FROM identifier(:snowflake_partner_dcr_internal_schema_dcn_partner_new_requests)
+        WHERE METADATA$ACTION = 'INSERT'
+        ) a
+    WHERE a.current_flag = 1
+  ;
+
+  -- Create Table Stream on shared match_attempts table
+  USE ROLE identifier(:snowflake_partner_role);
+  CREATE OR REPLACE STREAM identifier(:snowflake_partner_dcr_internal_schema_dcn_partner_new_match_attempts)
+  ON TABLE identifier(:dcn_partner_dcr_shared_schema_match_attempts)
+    APPEND_ONLY = TRUE
+    DATA_RETENTION_TIME_IN_DAYS = 14;
+
+  -- Create view to pull data from the just-created table stream
+  CREATE OR REPLACE VIEW identifier(:snowflake_partner_dcr_internal_schema_new_match_attempts_all)
+  AS
+  SELECT * FROM
+      (SELECT request_id,
+          match_id,
+          match_attempt_id,
+          match_result,
           RANK() OVER (PARTITION BY request_id ORDER BY request_ts DESC) AS current_flag
         FROM identifier(:snowflake_partner_dcr_internal_schema_dcn_partner_new_requests)
         WHERE METADATA$ACTION = 'INSERT'
@@ -572,6 +605,61 @@ BEGIN
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
   let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :match_id);
   return table(res);
+END;
+
+CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.fetch_match_results(dcn_slug VARCHAR)
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :crrent_dcn_slug LIMIT 1);
+  let c1 cursor for account_res;
+  let dcn_account_id VARCHAR := 'dummy';
+  for row_variable in c1 do
+    dcn_account_id := row_variable.dcn_account_id;
+  end for;
+
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
+  let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
+  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
+  let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
+  let snowflake_partner_dcr_shared_internal_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
+  let snowflake_partner_dcr_shared_internal_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
+  let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_db';
+  let dcn_partner_dcr_shared_schema_match_attempts VARCHAR := :dcn_partner_dcr_db || '.shared_schema.match_attempts';
+  let snowflake_partner_dcr_internal_schema_new_match_attempts_all VARCHAR := :snowflake_partner_dcr_internal_schema || '.new_match_attempts_all';
+  let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_source_db';
+  let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
+  let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
+  let snowflake_partner_dcr_internal_schema_pending_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.pending_match_attempts';
+  let snowflake_partner_dcr_shared_internal_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
+  let snowflake_partner_dcr_shared_internal_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
+
+  INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_new_match_attempts_all);
+
+  let new_match_results RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts));
+  let c1 cursor for new_match_results;
+  for row_variable in c1 do
+    let match_id := row_variable.match_id;
+    BEGIN TRANSACTION;
+    DELETE FROM identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) WHERE match_id ILIKE :match_id;
+    DELETE FROM identifier(:snowflake_partner_source_schema_profiles) WHERE match_id ILIKE :match_id;
+    DELETE FROM identifier(:snowflake_partner_dcr_shared_schema_match_requests) WHERE match_id ILIKE :match_id;
+    COMMIT;
+  end for;
+
+  let current_requests_res RESULTSET := (SELECT COUNT(*) FROM identifier(:snowflake_partner_dcr_shared_schema_match_requests));
+  let c1 cursor for current_requests_res;
+  let no_requests BOOLEAN := TRUE;
+  for row_variable in c1 do
+    no_requests := row_variable.count = 0;
+  end for;
+
+  IF (no_records) then
+    DROP TASK identifier(:snowflake_partner_dcr_shared_internal_validator);
+    DROP TASK identifier(:snowflake_partner_dcr_shared_internal_fetcher);
+  END IF;
 END;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.version()
