@@ -1,4 +1,4 @@
--- Snowflake Partner account setup #1
+-- Snowflake Partner setup script
 USE ROLE accountadmin;
 CREATE DATABASE IF NOT EXISTS optable_partnership;
 CREATE SCHEMA IF NOT EXISTS optable_partnership.public;
@@ -202,18 +202,18 @@ $$
           // Next, check to see if the approved query already exists in the internal schema APPROVED_QUERY_REQUESTS table...
           var approved_query_exists_sql = "SELECT count(*) FROM " + dcr_db_internal_schema_name + ".approved_query_requests \
                                            WHERE query_text = " + approved_query_text + ";";
-      var approved_query_exists_statement = snowflake.createStatement( {sqlText: approved_query_exists_sql} );
-      var approved_query_exists_result = approved_query_exists_statement.execute();
-      approved_query_exists_result.next();
-      var approved_query_found = approved_query_exists_result.getColumnValue(1);
+          var approved_query_exists_statement = snowflake.createStatement( {sqlText: approved_query_exists_sql} );
+          var approved_query_exists_result = approved_query_exists_statement.execute();
+          approved_query_exists_result.next();
+          var approved_query_found = approved_query_exists_result.getColumnValue(1);
 
           // Finally, insert the approved query into the internal schema APPROVED_QUERY_REQUESTS table if it doesn't already exist there.
           if (approved_query_found == "0") {
-        var insert_approved_query_sql = "INSERT INTO " + dcr_db_internal_schema_name + ".approved_query_requests (query_name, query_text) \
-                         VALUES ('" + query_template_name + "', " + approved_query_text + ");";
-        var insert_approved_query_statement = snowflake.createStatement( {sqlText: insert_approved_query_sql} );
-        var insert_approved_query_result = insert_approved_query_statement.execute();
-            }
+            var insert_approved_query_sql = "INSERT INTO " + dcr_db_internal_schema_name + ".approved_query_requests (query_name, query_text) \
+                             VALUES ('" + query_template_name + "', " + approved_query_text + ");";
+            var insert_approved_query_statement = snowflake.createStatement( {sqlText: insert_approved_query_sql} );
+            var insert_approved_query_result = insert_approved_query_statement.execute();
+          }
         }
       } // Template work ends here.
 
