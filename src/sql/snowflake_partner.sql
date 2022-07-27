@@ -17,7 +17,7 @@ LANGUAGE JAVASCRIPT
 EXECUTE AS CALLER
 AS
 $$
-  var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CRRENT_DCN_SLUG + "' LIMIT 1"} );
+  var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CURRENT_DCN_SLUG + "' LIMIT 1"} );
   var dcn_account_result = dcn_account_stmt.execute();
   dcn_account_result.next();
   var dcn_account_id = dcn_account_result.getColumnValue(1);
@@ -93,7 +93,7 @@ $$
     current_account_result.next();
     var snowflake_account_id = current_account_result.getColumnValue(1);
 
-    var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CRRENT_DCN_SLUG + "' LIMIT 1"} );
+    var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CURRENT_DCN_SLUG + "' LIMIT 1"} );
     var dcn_account_result = dcn_account_stmt.execute();
     dcn_account_result.next();
     var dcn_account_id = dcn_account_result.getColumnValue(1);
@@ -273,19 +273,12 @@ $$
 $$
 ;
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_connect(dcn_slug VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_connect(dcn_slug VARCHAR, dcn_account_id VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-
-  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :crrent_dcn_slug LIMIT 1);
-  let c1 cursor for account_res;
-  let dcn_account_id VARCHAR := 'dummy';
-  for row_variable in c1 do
-    dcn_account_id := row_variable.dcn_account_id;
-  end for;
 
   let snowflake_partner_account_id VARCHAR := current_account();
   let snowflake_partner_username VARCHAR := current_user();
@@ -314,6 +307,7 @@ BEGIN
   let dcn_partner_dcr_share VARCHAR := :dcn_account_id || '.dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_share';
   let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_db';
   let dcn_partner_dcr_shared_schema_query_requests VARCHAR := :dcn_partner_dcr_db || '.shared_schema.query_requests';
+  let dcn_partner_dcr_shared_schema_match_attempts VARCHAR := :dcn_partner_dcr_db || '.shared_schema.match_attempts';
 
   -- Create roles
 
@@ -491,12 +485,12 @@ BEGIN
   CREATE OR REPLACE VIEW identifier(:snowflake_partner_dcr_internal_schema_new_match_attempts_all)
   AS
   SELECT * FROM
-      (SELECT request_id,
+      (SELECT
           match_id,
           match_attempt_id,
           match_result,
-          RANK() OVER (PARTITION BY request_id ORDER BY request_ts DESC) AS current_flag
-        FROM identifier(:snowflake_partner_dcr_internal_schema_dcn_partner_new_requests)
+          RANK() OVER (PARTITION BY match_id ORDER BY attempt_ts DESC) AS current_flag
+        FROM identifier(:snowflake_partner_dcr_internal_schema_dcn_partner_new_match_attempts)
         WHERE METADATA$ACTION = 'INSERT'
         ) a
     WHERE a.current_flag = 1
@@ -516,7 +510,7 @@ LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :crrent_dcn_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
   let c1 cursor for account_res;
   let dcn_account_id VARCHAR := 'dummy';
   for row_variable in c1 do
@@ -538,7 +532,7 @@ LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :crrent_dcn_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
   let c1 cursor for account_res;
   let dcn_account_id VARCHAR := 'dummy';
   for row_variable in c1 do
@@ -558,7 +552,7 @@ LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :crrent_dcn_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
   let c1 cursor for account_res;
   let dcn_account_id VARCHAR := 'dummy';
   for row_variable in c1 do
@@ -603,7 +597,7 @@ BEGIN
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
-  let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :match_id);
+  let res RESULTSET := (SELECT match_id, match_result FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :match_id);
   return table(res);
 END;
 
@@ -613,7 +607,7 @@ LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :crrent_dcn_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
   let c1 cursor for account_res;
   let dcn_account_id VARCHAR := 'dummy';
   for row_variable in c1 do
