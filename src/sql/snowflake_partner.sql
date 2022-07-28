@@ -546,7 +546,7 @@ BEGIN
   RETURN table(res);
 END;
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.match_run(dcn_slug VARCHAR, match_id VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.public.match_run(dcn_slug VARCHAR, match_id VARCHAR, source_table VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
@@ -565,8 +565,44 @@ BEGIN
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_shared_internal_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
   let snowflake_partner_dcr_shared_internal_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
+  let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_source_db';
+  let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
+  let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
 
+  BEGIN TRANSACTION;
   INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_matches) VALUES(:match_id, current_timestamp());
+  SHOW COLUMNS IN identifier(:source_table);
+  let query_id RESULTSET := (call last_query_id());
+  let columns_res RESULTSET := (SELECT * FROM TABLE(result_scan(:query_id)));
+  let c1 cursor for columns_res;
+  for row_variable in c1 do
+    let column_name VARCHAR := row_variable.column_name;
+    IF (column_name ILIKE 'id_e%') THEN
+      SHOW DATABASES;
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_email(id_e) FROM identifier(:source_table);
+    ELSEIF (column_name ILIKE 'id_p%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_phone(id_p) FROM identifier(:source_table);
+    ELSEIF (column_name ILIKE 'id_i4%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_ipv4(id_i4) FROM identifier(:source_table);
+    ELSEIF (column_name ILIKE 'id_i6%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_ipv6(id_i6) FROM identifier(:source_table);
+    ELSEIF (column_name ILIKE 'id_a%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_apple(id_a) FROM identifier(:source_table);
+    ELSEIF (column_name ILIKE 'id_g%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_google(id_g) FROM identifier(:source_table);
+    ELSEIF (column_name ILIKE 'id_r%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_roku(id_r) FROM identifier(:source_table);
+    ELSEIF (column_name ILIKE 'id_s%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_samsung(id_s) FROM identifier(:source_table);
+    ELSEIF (column_name ILIKE 'id_f%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_amazon(id_f) FROM identifier(:source_table);
+    ELSEIF (column_name ILIKE 'id_n%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_net_id(id_n) FROM identifier(:source_table);
+    ELSEIF (column_name ILIKE 'id%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_id(id) FROM identifier(:source_table);
+    END IF;
+  end for;
+  COMMIT;
 
   -- Schedule validator task
   CREATE TASK IF NOT EXISTS identifier(:snowflake_partner_dcr_shared_internal_validator)
@@ -650,7 +686,7 @@ BEGIN
     no_requests := row_variable.count = 0;
   end for;
 
-  IF (no_records) then
+  IF (no_requests) then
     DROP TASK identifier(:snowflake_partner_dcr_shared_internal_validator);
     DROP TASK identifier(:snowflake_partner_dcr_shared_internal_fetcher);
   END IF;
@@ -665,3 +701,80 @@ BEGIN
   let res RESULTSET := (SELECT version FROM optable_partnership.public.version);
   return table(res);
 END;
+
+CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_email(id VARCHAR)
+RETURNS VARCHAR
+AS
+$$
+  'e:' || id
+$$;
+
+CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_apple(id VARCHAR)
+RETURNS VARCHAR
+AS
+$$
+  'a:' || id
+$$;
+
+CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_google(id VARCHAR)
+RETURNS VARCHAR
+AS
+$$
+  'g:' || id
+$$;
+
+CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_ipv4(id VARCHAR)
+RETURNS VARCHAR
+AS
+$$
+  'i4:' || id
+$$;
+
+CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_ipv6(id VARCHAR)
+RETURNS VARCHAR
+AS
+$$
+  'i6:' || id
+$$;
+
+CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_samsung(id VARCHAR)
+RETURNS VARCHAR
+AS
+$$
+  's:' || id
+$$;
+
+CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_roku(id VARCHAR)
+RETURNS VARCHAR
+AS
+$$
+  'r:' || id
+$$;
+
+CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_amazon(id VARCHAR)
+RETURNS VARCHAR
+AS
+$$
+  'f:' || id
+$$;
+
+CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_phone(id VARCHAR)
+RETURNS VARCHAR
+AS
+$$
+  'p:' || id
+$$;
+
+CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_net_id(id VARCHAR)
+RETURNS VARCHAR
+AS
+$$
+  'n:' || id
+$$;
+
+CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_id(id VARCHAR)
+RETURNS VARCHAR
+AS
+$$
+  'temporary:' || id
+$$;
