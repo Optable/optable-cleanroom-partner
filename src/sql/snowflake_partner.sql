@@ -366,7 +366,7 @@ BEGIN
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_match_requests)
   (
     match_id VARCHAR UNIQUE,
-    name VARCHAR UNIQUE,
+    name VARCHAR,
     create_time TIMESTAMP
   );
 
@@ -559,62 +559,78 @@ BEGIN
     dcn_account_id := row_variable.dcn_account_id;
   end for;
 
+  let snowflake_partner_warehouse VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_warehouse';
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
-  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
+  let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
-  let snowflake_partner_dcr_shared_internal_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
-  let snowflake_partner_dcr_shared_internal_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
+  let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
+  let snowflake_partner_dcr_internal_schema_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
+  let snowflake_partner_dcr_internal_schema_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
   let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_source_db';
   let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
   let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
 
+  let matches_res RESULTSET := (SELECT COUNT(*) AS count FROM identifier(:snowflake_partner_dcr_shared_schema_match_requests) WHERE match_id ILIKE :match_id);
+  let c2 cursor for matches_res;
+  for row_variable in c2 do
+    IF (row_variable.count > 0) THEN
+        RETURN 'You cannot schedule the same match more than once at a time. Match ' || :match_id || ' is already running';
+    END IF;
+  end for;
+
   BEGIN TRANSACTION;
-  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_matches) VALUES(:match_id, current_timestamp());
-  SHOW COLUMNS IN identifier(:source_table);
-  let query_id RESULTSET := (call last_query_id());
-  let columns_res RESULTSET := (SELECT * FROM TABLE(result_scan(:query_id)));
-  let c1 cursor for columns_res;
-  for row_variable in c1 do
-    let column_name VARCHAR := row_variable.column_name;
-    IF (column_name ILIKE 'id_e%') THEN
-      SHOW DATABASES;
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_email(id_e) FROM identifier(:source_table);
-    ELSEIF (column_name ILIKE 'id_p%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_phone(id_p) FROM identifier(:source_table);
-    ELSEIF (column_name ILIKE 'id_i4%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_ipv4(id_i4) FROM identifier(:source_table);
-    ELSEIF (column_name ILIKE 'id_i6%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_ipv6(id_i6) FROM identifier(:source_table);
-    ELSEIF (column_name ILIKE 'id_a%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_apple(id_a) FROM identifier(:source_table);
-    ELSEIF (column_name ILIKE 'id_g%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_google(id_g) FROM identifier(:source_table);
-    ELSEIF (column_name ILIKE 'id_r%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_roku(id_r) FROM identifier(:source_table);
-    ELSEIF (column_name ILIKE 'id_s%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_samsung(id_s) FROM identifier(:source_table);
-    ELSEIF (column_name ILIKE 'id_f%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_amazon(id_f) FROM identifier(:source_table);
-    ELSEIF (column_name ILIKE 'id_n%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_net_id(id_n) FROM identifier(:source_table);
-    ELSEIF (column_name ILIKE 'id%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT :match_id, optable_partnership.internal_schema.parse_id(id) FROM identifier(:source_table);
+  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_match_requests) SELECT :match_id, match_name, current_timestamp() FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :match_id;
+
+  let columns_res RESULTSET := (call optable_partnership.internal_schema.show_columns(:source_table));
+  let c3 cursor for columns_res;
+  for r in c3 do
+    let cn VARCHAR := r.column_name;
+    IF (cn ILIKE 'id_e%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_email(identifier(:cn)), :match_id FROM identifier(:source_table);
+    ELSEIF (cn ILIKE 'id_p%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_phone(identifier(:cn)), :match_id FROM identifier(:source_table);
+    ELSEIF (cn ILIKE 'id_i4%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_ipv4(identifier(:cn)), :match_id FROM identifier(:source_table);
+    ELSEIF (cn ILIKE 'id_i6%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_ipv6(identifier(:cn)), :match_id FROM identifier(:source_table);
+    ELSEIF (cn ILIKE 'id_a%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_apple(identifier(:cn)), :match_id FROM identifier(:source_table);
+    ELSEIF (cn ILIKE 'id_g%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_google(identifier(:cn)), :match_id FROM identifier(:source_table);
+    ELSEIF (cn ILIKE 'id_r%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_roku(identifier(:cn)), :match_id FROM identifier(:source_table);
+    ELSEIF (cn ILIKE 'id_s%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_samsung(identifier(:cn)), :match_id FROM identifier(:source_table);
+    ELSEIF (cn ILIKE 'id_f%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_amazon(identifier(:cn)), :match_id FROM identifier(:source_table);
+    ELSEIF (cn ILIKE 'id_n%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_net_id(identifier(:cn)), :match_id FROM identifier(:source_table);
+    ELSEIF (cn ILIKE 'id%') THEN
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_id(identifier(:cn)), :match_id FROM identifier(:source_table);
     END IF;
   end for;
   COMMIT;
 
   -- Schedule validator task
-  CREATE TASK IF NOT EXISTS identifier(:snowflake_partner_dcr_shared_internal_validator)
+  CREATE OR REPLACE TASK identifier(:snowflake_partner_dcr_internal_schema_validator)
+    WAREHOUSE = :snowflake_partner_warehouse
     SCHEDULE = 'USING CRON * * * * * UTC'
+    ALLOW_OVERLAPPING_EXECUTION = FALSE
   AS
   call optable_partnership.internal_schema.validate_query(:dcn_slug);
 
+  EXECUTE TASK identifier(:snowflake_partner_dcr_internal_schema_validator);
+
   -- Schedule a task to fetch match results from the DCN
-  CREATE TASK IF NOT EXISTS identifier(:snowflake_partner_dcr_shared_internal_fetcher)
+  CREATE OR REPLACE TASK identifier(:snowflake_partner_dcr_internal_schema_fetcher)
+    WAREHOUSE = :snowflake_partner_warehouse
     SCHEDULE = 'USING CRON * * * * * UTC'
+    ALLOW_OVERLAPPING_EXECUTION = FALSE
   AS
   call optable_partnership.internal_schema.fetch_match_results(:dcn_slug);
+
+  EXECUTE TASK identifier(:snowflake_partner_dcr_internal_schema_fetcher);
 END;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_get_results(dcn_slug VARCHAR, match_id VARCHAR)
@@ -663,8 +679,8 @@ BEGIN
   let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
   let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
   let snowflake_partner_dcr_internal_schema_pending_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.pending_match_attempts';
-  let snowflake_partner_dcr_shared_internal_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
-  let snowflake_partner_dcr_shared_internal_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
+  let snowflake_partner_dcr_internal_schema_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
+  let snowflake_partner_dcr_internal_schema_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
 
   INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_new_match_attempts_all);
 
@@ -687,8 +703,8 @@ BEGIN
   end for;
 
   IF (no_requests) then
-    DROP TASK identifier(:snowflake_partner_dcr_shared_internal_validator);
-    DROP TASK identifier(:snowflake_partner_dcr_shared_internal_fetcher);
+    DROP TASK identifier(:snowflake_partner_dcr_internal_schema_validator);
+    DROP TASK identifier(:snowflake_partner_dcr_internal_schema_fetcher);
   END IF;
 END;
 
@@ -778,3 +794,14 @@ AS
 $$
   'temporary:' || id
 $$;
+
+CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.show_columns(source_table VARCHAR)
+RETURNS TABLE(column_name VARCHAR)
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+    SHOW COLUMNS IN identifier(:source_table);
+    let columns_res RESULTSET := (SELECT "column_name" from table(result_scan(last_query_id())));
+    return TABLE(columns_res);
+END;
