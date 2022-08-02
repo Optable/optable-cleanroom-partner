@@ -321,8 +321,19 @@ BEGIN
   GRANT CREATE DATABASE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
   GRANT CREATE SHARE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
   GRANT IMPORT SHARE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
-  GRANT EXECUTE TASK ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
   GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
+
+  GRANT USAGE ON DATABASE optable_partnership TO ROLE identifier(:snowflake_partner_role);
+  GRANT USAGE ON SCHEMA optable_partnership.public TO ROLE identifier(:snowflake_partner_role);
+  GRANT USAGE ON SCHEMA optable_partnership.internal_schema TO ROLE identifier(:snowflake_partner_role);
+  GRANT ALL privileges ON ALL PROCEDURES IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
+  GRANT ALL privileges ON ALL FUNCTIONS IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
+  GRANT SELECT ON ALL TABLES IN DATABASE optable_partnership TO ROLE identifier(:snowflake_partner_role);
+  GRANT EXECUTE TASK, EXECUTE MANAGED TASK ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
+  GRANT ALL privileges ON FUTURE PROCEDURES IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
+  GRANT ALL privileges ON FUTURE FUNCTIONS IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
+  GRANT SELECT ON FUTURE TABLES IN DATABASE optable_partnership TO ROLE identifier(:snowflake_partner_role);
+
 
   -- Create virtual warehouse
   USE ROLE identifier(:snowflake_partner_role);
@@ -489,7 +500,8 @@ BEGIN
           match_id,
           match_attempt_id,
           match_result,
-          RANK() OVER (PARTITION BY match_id ORDER BY attempt_ts DESC) AS current_flag
+          attempt_ts,
+          RANK() OVER (PARTITION BY match_id, match_attempt_id ORDER BY attempt_ts DESC) AS current_flag
         FROM identifier(:snowflake_partner_dcr_internal_schema_dcn_partner_new_match_attempts)
         WHERE METADATA$ACTION = 'INSERT'
         ) a
@@ -559,6 +571,7 @@ BEGIN
     dcn_account_id := row_variable.dcn_account_id;
   end for;
 
+  let snowflake_partner_role VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_role';
   let snowflake_partner_warehouse VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_warehouse';
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
@@ -612,25 +625,33 @@ BEGIN
   end for;
   COMMIT;
 
-  -- Schedule validator task
-  CREATE OR REPLACE TASK identifier(:snowflake_partner_dcr_internal_schema_validator)
-    WAREHOUSE = :snowflake_partner_warehouse
-    SCHEDULE = 'USING CRON * * * * * UTC'
-    ALLOW_OVERLAPPING_EXECUTION = FALSE
-  AS
-  call optable_partnership.internal_schema.validate_query(:dcn_slug);
+  USE ROLE identifier(:snowflake_partner_role);
+  USE WAREHOUSE identifier(:snowflake_partner_warehouse);
 
-  EXECUTE TASK identifier(:snowflake_partner_dcr_internal_schema_validator);
+  let tasks_stmts ARRAY := [
+    -- create validator task
+    'CREATE OR REPLACE TASK ' || :snowflake_partner_dcr_internal_schema_validator || ' ' ||
+      'SCHEDULE = \'USING CRON * * * * * UTC\' '||
+      'ALLOW_OVERLAPPING_EXECUTION = FALSE ' ||
+    'AS ' ||
+    'call optable_partnership.internal_schema.validate_query(\'' || :dcn_slug || '\')',
+    -- create fetcher task
+    'CREATE OR REPLACE TASK ' || :snowflake_partner_dcr_internal_schema_fetcher || ' ' ||
+      'SCHEDULE = \'USING CRON * * * * * UTC\' ' ||
+      'ALLOW_OVERLAPPING_EXECUTION = FALSE ' ||
+    'AS ' ||
+    'call optable_partnership.internal_schema.fetch_match_results(\'' || :dcn_slug || '\')'
+  ];
 
-  -- Schedule a task to fetch match results from the DCN
-  CREATE OR REPLACE TASK identifier(:snowflake_partner_dcr_internal_schema_fetcher)
-    WAREHOUSE = :snowflake_partner_warehouse
-    SCHEDULE = 'USING CRON * * * * * UTC'
-    ALLOW_OVERLAPPING_EXECUTION = FALSE
-  AS
-  call optable_partnership.internal_schema.fetch_match_results(:dcn_slug);
+   FOR i IN 1 TO array_size(:tasks_stmts) DO
+     EXECUTE IMMEDIATE replace(:tasks_stmts[i-1], '"', '');
+   END FOR;
 
-  EXECUTE TASK identifier(:snowflake_partner_dcr_internal_schema_fetcher);
+  -- Start the validator task
+  ALTER TASK identifier(:snowflake_partner_dcr_internal_schema_validator) RESUME;
+  -- Start the task to fetch match results from the DCN
+  ALTER TASK identifier(:snowflake_partner_dcr_internal_schema_fetcher) RESUME;
+
 END;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_get_results(dcn_slug VARCHAR, match_id VARCHAR)
@@ -666,9 +687,10 @@ BEGIN
     dcn_account_id := row_variable.dcn_account_id;
   end for;
 
+  let snowflake_partner_account_id VARCHAR := current_account();
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
-  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
+  let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_shared_internal_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
   let snowflake_partner_dcr_shared_internal_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
@@ -678,27 +700,29 @@ BEGIN
   let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_source_db';
   let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
   let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
+  let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
   let snowflake_partner_dcr_internal_schema_pending_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.pending_match_attempts';
   let snowflake_partner_dcr_internal_schema_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
   let snowflake_partner_dcr_internal_schema_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
 
-  INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_new_match_attempts_all);
+  INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) SELECT match_id, match_attempt_id, match_result FROM identifier(:snowflake_partner_dcr_internal_schema_new_match_attempts_all);
 
   let new_match_results RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts));
-  let c1 cursor for new_match_results;
-  for row_variable in c1 do
-    let match_id := row_variable.match_id;
+  let c2 cursor for new_match_results;
+  for row_variable in c2 do
+    let match_id VARCHAR := row_variable.match_id;
     BEGIN TRANSACTION;
+    INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_match_attempts) SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) WHERE match_id ILIKE :match_id;
     DELETE FROM identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) WHERE match_id ILIKE :match_id;
     DELETE FROM identifier(:snowflake_partner_source_schema_profiles) WHERE match_id ILIKE :match_id;
     DELETE FROM identifier(:snowflake_partner_dcr_shared_schema_match_requests) WHERE match_id ILIKE :match_id;
     COMMIT;
   end for;
 
-  let current_requests_res RESULTSET := (SELECT COUNT(*) FROM identifier(:snowflake_partner_dcr_shared_schema_match_requests));
-  let c1 cursor for current_requests_res;
+  let current_requests_res RESULTSET := (SELECT COUNT(*) AS count FROM identifier(:snowflake_partner_dcr_shared_schema_match_requests));
+  let c3 cursor for current_requests_res;
   let no_requests BOOLEAN := TRUE;
-  for row_variable in c1 do
+  for row_variable in c3 do
     no_requests := row_variable.count = 0;
   end for;
 
