@@ -55,7 +55,7 @@ $$
 ;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_list()
-RETURNS TABLE(dcn_slug VARCHAR, dcn_account_locator_id VARCHAR, snowflake_partner_role VARCHAR)
+RETURNS TABLE(dcn_slug VARCHAR, dcn_account_locator_id VARCHAR, snowflake_partner_role VARCHAR, status VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
@@ -64,7 +64,8 @@ DECLARE
     QUERY STRING;
     res resultset;
 BEGIN
-   QUERY := 'SELECT * FROM optable_partnership.public.dcn_partners';
+   -- TODO: change the hardcoded connected to actual partnership status
+   QUERY := $$SELECT *, 'connected' FROM optable_partnership.public.dcn_partners$$;
    res := (EXECUTE IMMEDIATE :QUERY);
    return table(res);
 END;
@@ -406,14 +407,18 @@ BEGIN
   (
     match_id VARCHAR,
     match_attempt_id VARCHAR,
-    match_result VARIANT
+    match_result VARIANT,
+    run_time TIMESTAMP,
+    status VARCHAR
   );
 
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts)
   (
     match_id VARCHAR,
     match_attempt_id VARCHAR,
-    match_result VARIANT
+    match_result VARIANT,
+    run_time TIMESTAMP,
+    status VARCHAR
   );
 
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_matches)
@@ -500,6 +505,7 @@ BEGIN
           match_attempt_id,
           match_result,
           attempt_ts,
+          status,
           RANK() OVER (PARTITION BY match_id, match_attempt_id ORDER BY attempt_ts DESC) AS current_flag
         FROM identifier(:snowflake_partner_dcr_internal_schema_dcn_partner_new_match_attempts)
         WHERE METADATA$ACTION = 'INSERT'
@@ -654,7 +660,7 @@ BEGIN
 END;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_get_results(dcn_slug VARCHAR, match_id VARCHAR)
-RETURNS TABLE(match_id VARCHAR, match_result VARIANT)
+RETURNS TABLE(match_id VARCHAR, match_result VARIANT, run_time TIMESTAMP, status VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
@@ -669,7 +675,7 @@ BEGIN
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
-  let res RESULTSET := (SELECT match_id, match_result FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :match_id);
+  let res RESULTSET := (SELECT match_id, match_result, run_time, status FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :match_id);
   return table(res);
 END;
 
@@ -704,7 +710,7 @@ BEGIN
   let snowflake_partner_dcr_internal_schema_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
   let snowflake_partner_dcr_internal_schema_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
 
-  INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) SELECT match_id, match_attempt_id, match_result FROM identifier(:snowflake_partner_dcr_internal_schema_new_match_attempts_all);
+  INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) SELECT match_id, match_attempt_id, match_result, attempt_ts, status FROM identifier(:snowflake_partner_dcr_internal_schema_new_match_attempts_all);
 
   let new_match_results RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts));
   let c2 cursor for new_match_results;
