@@ -6,7 +6,7 @@ CREATE SCHEMA IF NOT EXISTS optable_partnership.internal_schema;
 CREATE OR REPLACE WAREHOUSE optable_partnership_setup warehouse_size=xsmall;
 USE warehouse optable_partnership_setup;
 
-CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_partners(dcn_slug VARCHAR NOT NULL, dcn_account_id VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL);
+CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_partners(dcn_slug VARCHAR NOT NULL, dcn_account_locator_id VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL);
 CREATE TABLE IF NOT EXISTS optable_partnership.public.version(version VARCHAR NOT NULL);
 DELETE FROM optable_partnership.public.version;
 INSERT INTO optable_partnership.public.version VALUES ('v0.0.1');
@@ -17,17 +17,17 @@ LANGUAGE JAVASCRIPT
 EXECUTE AS CALLER
 AS
 $$
-  var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CURRENT_DCN_SLUG + "' LIMIT 1"} );
+  var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CURRENT_DCN_SLUG + "' LIMIT 1"} );
   var dcn_account_result = dcn_account_stmt.execute();
   dcn_account_result.next();
-  var dcn_account_id = dcn_account_result.getColumnValue(1);
+  var dcn_account_locator_id = dcn_account_result.getColumnValue(1);
 
-  var snowflake_partner_source_share = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_source_share";
-  var snowflake_partner_dcr_share = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_dcr_share";
-  var snowflake_partner_source_db = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_source_db";
-  var snowflake_partner_dcr_db = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_dcr_db";
-  var snowflake_partner_role = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_role";
-  var snowflake_partner_warehouse = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_warehouse";
+  var snowflake_partner_source_share = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_locator_id + "_source_share";
+  var snowflake_partner_dcr_share = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_locator_id + "_dcr_share";
+  var snowflake_partner_source_db = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_locator_id + "_source_db";
+  var snowflake_partner_dcr_db = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_locator_id + "_dcr_db";
+  var snowflake_partner_role = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_locator_id + "_role";
+  var snowflake_partner_warehouse = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_locator_id + "_warehouse";
 
   var statements = [
     "USE ROLE accountadmin",
@@ -55,7 +55,7 @@ $$
 ;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_list()
-RETURNS TABLE(dcn_slug VARCHAR, dcn_account_id VARCHAR, snowflake_partner_role VARCHAR)
+RETURNS TABLE(dcn_slug VARCHAR, dcn_account_locator_id VARCHAR, snowflake_partner_role VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
@@ -91,16 +91,16 @@ $$
     var current_account_stmt = snowflake.createStatement( {sqlText: "SELECT current_account()"} );
     var current_account_result = current_account_stmt.execute();
     current_account_result.next();
-    var snowflake_account_id = current_account_result.getColumnValue(1);
+    var snowflake_account_locator_id = current_account_result.getColumnValue(1);
 
-    var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CURRENT_DCN_SLUG + "' LIMIT 1"} );
+    var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CURRENT_DCN_SLUG + "' LIMIT 1"} );
     var dcn_account_result = dcn_account_stmt.execute();
     dcn_account_result.next();
-    var dcn_account_id = dcn_account_result.getColumnValue(1);
+    var dcn_account_locator_id = dcn_account_result.getColumnValue(1);
 
-    var source_db_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_source_db";
-    var dcr_db_internal_schema_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_dcr_db.internal_schema";
-    var dcr_db_shared_schema_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_dcr_db.shared_schema";
+    var source_db_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_locator_id + "_source_db";
+    var dcr_db_internal_schema_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_locator_id + "_dcr_db.internal_schema";
+    var dcr_db_shared_schema_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_locator_id + "_dcr_db.shared_schema";
 
     var minimum_record_fetch_threshold = 3;
     var completion_msg = "Finished query validation.";
@@ -196,9 +196,9 @@ $$
           approved_query_text = approved_query_text.replace(/@match_id/g, match_id);
           approved_query_text = approved_query_text.replace(/@threshold/g, minimum_record_fetch_threshold);
           approved_query_text = approved_query_text.replace(/@attimestamp/g, at_timestamp);
-          approved_query_text = approved_query_text.replace(/@snowflake_partner_source_source_schema_profiles/g, "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_id + "_source_db.source_schema.profiles");
-          approved_query_text = approved_query_text.replace(/@dcn_partner_source_source_schema_profiles/g, "dcn_partner_" + CURRENT_DCN_SLUG + "_" + snowflake_account_id + "_source_db.source_schema.profiles");
-          approved_query_text = approved_query_text.replace(/@dcn_partner_source_information_schema_tables/g, "dcn_partner_" + CURRENT_DCN_SLUG + "_" + snowflake_account_id + "_source_db.information_schema.tables");
+          approved_query_text = approved_query_text.replace(/@snowflake_partner_source_source_schema_profiles/g, "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_locator_id + "_source_db.source_schema.profiles");
+          approved_query_text = approved_query_text.replace(/@dcn_partner_source_source_schema_profiles/g, "dcn_partner_" + CURRENT_DCN_SLUG + "_" + snowflake_account_locator_id + "_source_db.source_schema.profiles");
+          approved_query_text = approved_query_text.replace(/@dcn_partner_source_information_schema_tables/g, "dcn_partner_" + CURRENT_DCN_SLUG + "_" + snowflake_account_locator_id + "_source_db.information_schema.tables");
           approved_query_text = String.fromCharCode(13, 36, 36) + approved_query_text + String.fromCharCode(13, 36, 36);  // Wrap the query text so that it can be passed to below SQL statements
 
 
@@ -273,21 +273,21 @@ $$
 $$
 ;
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_connect(dcn_slug VARCHAR, dcn_account_id VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_connect(dcn_slug VARCHAR, dcn_account_locator_id VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
 
-  let snowflake_partner_account_id VARCHAR := current_account();
+  let snowflake_partner_account_locator_id VARCHAR := current_account();
   let snowflake_partner_username VARCHAR := current_user();
-  let snowflake_partner_role VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_role';
-  let snowflake_partner_warehouse VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_warehouse';
-  let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_source_db';
-  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
-  let snowflake_partner_source_share VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_source_share';
-  let snowflake_partner_dcr_share VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_share';
+  let snowflake_partner_role VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_role';
+  let snowflake_partner_warehouse VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_warehouse';
+  let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_source_db';
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_dcr_db';
+  let snowflake_partner_source_share VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_source_share';
+  let snowflake_partner_dcr_share VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_dcr_share';
   let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
   let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
@@ -304,8 +304,8 @@ BEGIN
   let snowflake_partner_dcr_internal_schema_dcn_partner_new_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.dcn_partner_match_attempts';
   let snowflake_partner_dcr_internal_schema_new_match_attempts_all VARCHAR := :snowflake_partner_dcr_internal_schema || '.new_match_attempts_all';
   let snowflake_partner_dcr_internal_schema_pending_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.pending_match_attempts';
-  let dcn_partner_dcr_share VARCHAR := :dcn_account_id || '.dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_share';
-  let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_db';
+  let dcn_partner_dcr_share VARCHAR := :dcn_account_locator_id || '.dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_dcr_share';
+  let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_dcr_db';
   let dcn_partner_dcr_shared_schema_query_requests VARCHAR := :dcn_partner_dcr_db || '.shared_schema.query_requests';
   let dcn_partner_dcr_shared_schema_match_attempts VARCHAR := :dcn_partner_dcr_db || '.shared_schema.match_attempts';
 
@@ -333,7 +333,6 @@ BEGIN
   GRANT ALL privileges ON FUTURE PROCEDURES IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
   GRANT ALL privileges ON FUTURE FUNCTIONS IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
   GRANT SELECT ON FUTURE TABLES IN DATABASE optable_partnership TO ROLE identifier(:snowflake_partner_role);
-
 
   -- Create virtual warehouse
   USE ROLE identifier(:snowflake_partner_role);
@@ -449,8 +448,8 @@ BEGIN
     -- Add account to shares
     -- Note use of SHARE_RESTRICTIONS clause to enable sharing between Business Critical and Enterprise account deployments
     'USE ROLE accountadmin',
-    'ALTER SHARE ' || :snowflake_partner_dcr_share || ' ADD ACCOUNTS = ' || :dcn_account_id || ' SHARE_RESTRICTIONS=false',
-    'ALTER SHARE ' || :snowflake_partner_source_share || ' ADD ACCOUNTS = ' || :dcn_account_id || ' SHARE_RESTRICTIONS=false',
+    'ALTER SHARE ' || :snowflake_partner_dcr_share || ' ADD ACCOUNTS = ' || :dcn_account_locator_id || ' SHARE_RESTRICTIONS=false',
+    'ALTER SHARE ' || :snowflake_partner_source_share || ' ADD ACCOUNTS = ' || :dcn_account_locator_id || ' SHARE_RESTRICTIONS=false',
 
     -- Create databases from incoming Party2 share and grant privileges
     'CREATE OR REPLACE DATABASE ' || :dcn_partner_dcr_db || ' FROM SHARE ' || :dcn_partner_dcr_share,
@@ -511,7 +510,7 @@ BEGIN
   USE ROLE accountadmin;
 
   DELETE FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug;
-  INSERT INTO optable_partnership.public.dcn_partners (dcn_slug, dcn_account_id, snowflake_partner_role) VALUES (:dcn_slug, :dcn_account_id, :snowflake_partner_role);
+  INSERT INTO optable_partnership.public.dcn_partners (dcn_slug, dcn_account_locator_id, snowflake_partner_role) VALUES (:dcn_slug, :dcn_account_locator_id, :snowflake_partner_role);
 
   RETURN 'Partner ' || :dcn_slug || ' is successfully connected.';
 END;
@@ -522,14 +521,14 @@ LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
   let c1 cursor for account_res;
-  let dcn_account_id VARCHAR := 'dummy';
+  let dcn_account_locator_id VARCHAR := 'dummy';
   for row_variable in c1 do
-    dcn_account_id := row_variable.dcn_account_id;
+    dcn_account_locator_id := row_variable.dcn_account_locator_id;
   end for;
 
-  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
   let uuid := uuid_string();
@@ -544,14 +543,14 @@ LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
   let c1 cursor for account_res;
-  let dcn_account_id VARCHAR := 'dummy';
+  let dcn_account_locator_id VARCHAR := 'dummy';
   for row_variable in c1 do
-    dcn_account_id := row_variable.dcn_account_id;
+    dcn_account_locator_id := row_variable.dcn_account_locator_id;
   end for;
 
-  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
   let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_matches));
@@ -564,23 +563,23 @@ LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
   let c1 cursor for account_res;
-  let dcn_account_id VARCHAR := 'dummy';
+  let dcn_account_locator_id VARCHAR := 'dummy';
   for row_variable in c1 do
-    dcn_account_id := row_variable.dcn_account_id;
+    dcn_account_locator_id := row_variable.dcn_account_locator_id;
   end for;
 
-  let snowflake_partner_role VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_role';
-  let snowflake_partner_warehouse VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_warehouse';
-  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
+  let snowflake_partner_role VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_role';
+  let snowflake_partner_warehouse VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_warehouse';
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
   let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
   let snowflake_partner_dcr_internal_schema_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
   let snowflake_partner_dcr_internal_schema_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
-  let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_source_db';
+  let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_source_db';
   let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
   let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
 
@@ -660,14 +659,14 @@ LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
   let c1 cursor for account_res;
-  let dcn_account_id VARCHAR := '';
+  let dcn_account_locator_id VARCHAR := '';
   for row_variable in c1 do
-    dcn_account_id := row_variable.dcn_account_id;
+    dcn_account_locator_id := row_variable.dcn_account_locator_id;
   end for;
 
-  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
   let res RESULTSET := (SELECT match_id, match_result FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :match_id);
@@ -680,24 +679,24 @@ LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
   let c1 cursor for account_res;
-  let dcn_account_id VARCHAR := 'dummy';
+  let dcn_account_locator_id VARCHAR := 'dummy';
   for row_variable in c1 do
-    dcn_account_id := row_variable.dcn_account_id;
+    dcn_account_locator_id := row_variable.dcn_account_locator_id;
   end for;
 
-  let snowflake_partner_account_id VARCHAR := current_account();
-  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_dcr_db';
+  let snowflake_partner_account_locator_id VARCHAR := current_account();
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
   let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_shared_internal_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
   let snowflake_partner_dcr_shared_internal_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
-  let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_id || '_dcr_db';
+  let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_dcr_db';
   let dcn_partner_dcr_shared_schema_match_attempts VARCHAR := :dcn_partner_dcr_db || '.shared_schema.match_attempts';
   let snowflake_partner_dcr_internal_schema_new_match_attempts_all VARCHAR := :snowflake_partner_dcr_internal_schema || '.new_match_attempts_all';
-  let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_id || '_source_db';
+  let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :dcn_account_locator_id || '_source_db';
   let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
   let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
   let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
