@@ -16,11 +16,17 @@ LANGUAGE JAVASCRIPT
 EXECUTE AS CALLER
 AS
 $$
-  var dcn_partner_dcr_share = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_dcr_share";
-  var dcn_partner_role = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_role";
-  var dcn_partner_warehouse = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_warehouse";
-  var dcn_partner_source_db = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_source_db";
-  var dcn_partner_dcr_db = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_dcr_db";
+  // Set up local variables
+  var current_account_stmt = snowflake.createStatement( {sqlText: "SELECT current_account()"} );
+  var current_account_result = current_account_stmt.execute();
+  current_account_result.next();
+  var dcn_account_locator_id = current_account_result.getColumnValue(1);
+
+  var dcn_partner_dcr_share = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_dcr_share";
+  var dcn_partner_role = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_role";
+  var dcn_partner_warehouse = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_warehouse";
+  var dcn_partner_source_db = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_source_db";
+  var dcn_partner_dcr_db = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_dcr_db";
   var statements = [
     "USE ROLE accountadmin;",
     "DROP SHARE IF EXISTS " + dcn_partner_dcr_share,
@@ -46,10 +52,10 @@ $$
 
 call optable_partnership.public.disconnect_partner($dcn_slug, $snowflake_partner_account_locator_id);
 
-set dcn_partner_role = 'dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_role';
-set dcn_partner_warehouse = 'dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_warehouse';
-set dcn_partner_source_db = 'dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_source_db';
-set dcn_partner_dcr_db = 'dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_dcr_db';
+set dcn_partner_role = 'dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_' || $dcn_account_locator_id || '_role';
+set dcn_partner_warehouse = 'dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_' || $dcn_account_locator_id || '_warehouse';
+set dcn_partner_source_db = 'dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_' || $dcn_account_locator_id || '_source_db';
+set dcn_partner_dcr_db = 'dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_' || $dcn_account_locator_id || '_dcr_db';
 set dcn_partner_source_schema = $dcn_partner_source_db || '.source_schema';
 set dcn_partner_source_schema_profiles = $dcn_partner_source_schema || '.profiles';
 set dcn_partner_dcr_shared_schema = $dcn_partner_dcr_db || '.shared_schema';
@@ -57,11 +63,11 @@ set dcn_partner_dcr_internal_schema = $dcn_partner_dcr_db || '.internal_schema';
 set dcn_partner_dcr_shared_schema_query_requests = $dcn_partner_dcr_shared_schema || '.query_requests';
 set dcn_partner_dcr_shared_schema_match_attempts = $dcn_partner_dcr_shared_schema || '.match_attempts';
 set dcn_partner_dcr_internal_schema = $dcn_partner_dcr_db || '.internal_schema';
-set dcn_partner_dcr_share = 'dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_dcr_share';
-set snowflake_partner_dcr_share = $snowflake_partner_account_locator_id || '.snowflake_partner_' || $dcn_slug || '_' || $dcn_account_locator_id || '_dcr_share';
-set snowflake_partner_source_share = $snowflake_partner_account_locator_id || '.snowflake_partner_' || $dcn_slug || '_' || $dcn_account_locator_id || '_source_share';
-set snowflake_partner_source_db = 'snowflake_partner_' || $dcn_slug || '_' || $dcn_account_locator_id || '_source_db';
-set snowflake_partner_dcr_db = 'snowflake_partner_' || $dcn_slug || '_' || $dcn_account_locator_id || '_dcr_db';
+set dcn_partner_dcr_share = 'dcn_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_' || $dcn_account_locator_id || '_dcr_share';
+set snowflake_partner_dcr_share = $snowflake_partner_account_locator_id || '.snowflake_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_' || $dcn_account_locator_id || '_dcr_share';
+set snowflake_partner_source_share = $snowflake_partner_account_locator_id || '.snowflake_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_' || $dcn_account_locator_id || '_source_share';
+set snowflake_partner_source_db = 'snowflake_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_' || $dcn_account_locator_id || '_source_db';
+set snowflake_partner_dcr_db = 'snowflake_partner_' || $dcn_slug || '_' || $snowflake_partner_account_locator_id || '_' || $dcn_account_locator_id || '_dcr_db';
 
 -- Create roles
 USE ROLE securityadmin;
@@ -171,9 +177,9 @@ try {
   current_account_result.next();
   var dcn_account_locator_id = current_account_result.getColumnValue(1);
 
-  var dcr_db_internal_schema_name = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_dcr_db.internal_schema";
-  var dcr_db_shared_schema_name_in = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + dcn_account_locator_id + "_dcr_db.shared_schema";
-  var dcr_db_shared_schema_name_out = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_dcr_db.shared_schema";
+  var dcr_db_internal_schema_name = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_dcr_db.internal_schema";
+  var dcr_db_shared_schema_name_in = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_dcr_db.shared_schema";
+  var dcr_db_shared_schema_name_out = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_dcr_db.shared_schema";
 
   // Get parameters
   var match_id = MATCH_ID;
