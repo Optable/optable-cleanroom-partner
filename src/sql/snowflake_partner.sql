@@ -303,7 +303,7 @@ BEGIN
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_approved_query_requests VARCHAR := :snowflake_partner_dcr_internal_schema || '.approved_query_requests';
   let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
-  let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
+  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.matches';
   let snowflake_partner_source_schema_dcr_rap VARCHAR := :snowflake_partner_source_schema || '.dcr_rap';
   let snowflake_partner_dcr_internal_schema_dcn_partner_new_requests VARCHAR := :snowflake_partner_dcr_internal_schema || '.dcn_partner_new_requests';
   let snowflake_partner_dcr_internal_schema_new_requests_all VARCHAR := :snowflake_partner_dcr_internal_schema || '.new_requests_all';
@@ -426,7 +426,7 @@ BEGIN
     status VARCHAR
   );
 
-  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_matches)
+  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_matches)
   (
     match_id VARCHAR,
     match_name VARCHAR
@@ -448,6 +448,7 @@ BEGIN
     'GRANT USAGE ON SCHEMA ' || :snowflake_partner_dcr_shared_schema || ' TO SHARE ' || :snowflake_partner_dcr_share,
     'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_query_templates || ' TO SHARE ' || :snowflake_partner_dcr_share,
     'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_match_requests || ' TO SHARE ' || :snowflake_partner_dcr_share,
+    'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_matches || ' TO SHARE ' || :snowflake_partner_dcr_share,
     'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_request_status || ' TO SHARE ' || :snowflake_partner_dcr_share,
 
     -- Grant object privileges to source share
@@ -542,10 +543,10 @@ BEGIN
 
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
-  let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
+  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
   let uuid := uuid_string();
-  INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_matches) VALUES (:uuid, :match_name);
-  let res RESULTSET := (SELECT match_id FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :uuid);
+  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_matches) VALUES (:uuid, :match_name);
+  let res RESULTSET := (SELECT match_id FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :uuid);
   return table(res);
 END;
 
@@ -565,8 +566,8 @@ BEGIN
 
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
-  let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
-  let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_matches));
+  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
+  let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_shared_schema_matches));
   RETURN table(res);
 END;
 
@@ -590,7 +591,7 @@ BEGIN
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
   let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
-  let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
+  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.matches';
   let snowflake_partner_dcr_internal_schema_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
   let snowflake_partner_dcr_internal_schema_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
   let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_source_db';
@@ -606,7 +607,7 @@ BEGIN
   end for;
 
   BEGIN TRANSACTION;
-  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_match_requests) SELECT :match_id, match_name, current_timestamp() FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :match_id;
+  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_match_requests) SELECT :match_id, match_name, current_timestamp() FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id;
 
   let columns_res RESULTSET := (call optable_partnership.internal_schema.show_columns(:source_table));
   let c3 cursor for columns_res;
@@ -683,8 +684,8 @@ BEGIN
 
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
-  let snowflake_partner_dcr_internal_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
-  let res RESULTSET := (SELECT match_id, match_result, run_time, status FROM identifier(:snowflake_partner_dcr_internal_schema_matches) WHERE match_id ILIKE :match_id);
+  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
+  let res RESULTSET := (SELECT match_id, match_result, run_time, status FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id);
   return table(res);
 END;
 
