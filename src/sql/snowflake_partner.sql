@@ -199,7 +199,7 @@ $$
           comments = "APPROVED";
 
           // First, build the approved query from the template as a CTAS...
-          approved_query_text = "CREATE OR REPLACE TABLE " + match_attempt_id + "_" + target_table_name + " AS " + query_text;
+          approved_query_text = "CREATE OR REPLACE TABLE " + target_table_name + " AS " + query_text;
           approved_query_text = approved_query_text.replace(/@match_id/g, match_id);
           approved_query_text = approved_query_text.replace(/@threshold/g, minimum_record_fetch_threshold);
           approved_query_text = approved_query_text.replace(/@attimestamp/g, at_timestamp);
