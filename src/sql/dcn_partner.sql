@@ -112,16 +112,17 @@ CREATE OR REPLACE TABLE identifier($dcn_partner_dcr_shared_schema_query_requests
   query_template_name VARCHAR,
   match_id VARCHAR,
   match_attempt_id VARCHAR,
-  at_timestamp VARCHAR,
-  request_ts TIMESTAMP_NTZ
+  at_timestamp TIMESTAMP_TZ,
+  request_ts TIMESTAMP_TZ
 );
 
 CREATE OR REPLACE TABLE identifier($dcn_partner_dcr_shared_schema_match_attempts)
 (
+  result_id VARCHAR,
   match_id VARCHAR,
   match_attempt_id VARCHAR,
   match_result VARIANT,
-  attempt_ts TIMESTAMP_NTZ,
+  attempt_ts TIMESTAMP_TZ,
   status VARCHAR
 );
 
