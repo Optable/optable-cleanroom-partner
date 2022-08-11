@@ -166,6 +166,8 @@ $$
       // Validate the AT_TIMESTAMP for this query request.
       // Note that it must specify a timestamp from the past.
       try {
+        var timezoneStmt = snowflake.createStatement( {sqlText: "alter session set timezone = 'UTC'"} )
+        timezoneStmt.execute();
         var timestamp_sql = "SELECT CASE (to_timestamp('" + at_timestamp + "') < current_timestamp) WHEN TRUE THEN 'Valid' ELSE 'Not Valid' END;"
         var timestamp_statement = snowflake.createStatement( {sqlText: timestamp_sql} );
         var timestamp_result = timestamp_statement.execute();
@@ -199,7 +201,7 @@ $$
           comments = "APPROVED";
 
           // First, build the approved query from the template as a CTAS...
-          approved_query_text = "CREATE OR REPLACE TABLE " + target_table_name + " AS " + query_text;
+          approved_query_text = "INSERT INTO " + target_table_name + " " + query_text;
           approved_query_text = approved_query_text.replace(/@match_id/g, match_id);
           approved_query_text = approved_query_text.replace(/@threshold/g, minimum_record_fetch_threshold);
           approved_query_text = approved_query_text.replace(/@attimestamp/g, at_timestamp);
@@ -226,6 +228,8 @@ $$
         }
       } // Template work ends here.
 
+    var timezoneStmt = snowflake.createStatement( {sqlText: "ALTER SESSION SET timezone = 'UTC'"} )
+    timezoneStmt.execute();
     // Insert an acknowledgment record into the shared schema request_status table for the current query request.
     var request_status_sql = "INSERT INTO " + dcr_db_shared_schema_name + ".request_status \
                   (request_id, request_status, target_table_name, query_text, request_status_ts, comments, account_name) \
@@ -371,7 +375,7 @@ BEGIN
 
   DELETE FROM identifier(:snowflake_partner_dcr_shared_schema_query_templates);  -- Run this if you change any of the below queries
   INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_query_templates)
-  VALUES ('match_attempt', $$SELECT dcn_partner.* FROM @dcn_partner_source_source_schema_profiles at(timestamp=>'@attimestamp'::timestamp_tz) dcn_partner
+  VALUES ('match_attempt', $$SELECT dcn_partner.identifier AS id FROM @dcn_partner_source_source_schema_profiles at(timestamp=>'@attimestamp'::timestamp_ntz) dcn_partner
   INNER JOIN @snowflake_partner_source_source_schema_profiles snowflake_partner
   ON dcn_partner.identifier = snowflake_partner.identifier
   WHERE snowflake_partner.match_id = '@match_id'
@@ -381,9 +385,11 @@ BEGIN
   -- Create a table for match_requests
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_match_requests)
   (
+    request_id VARCHAR,
     match_id VARCHAR UNIQUE,
     name VARCHAR,
-    create_time TIMESTAMP
+    version VARCHAR,
+    create_time TIMESTAMP_TZ
   );
 
   -- Create request status table
@@ -393,7 +399,7 @@ BEGIN
     request_status VARCHAR,
     target_table_name VARCHAR,
     query_text VARCHAR,
-    request_status_ts TIMESTAMP_NTZ,
+    request_status_ts TIMESTAMP_TZ,
     comments VARCHAR,
     account_name VARCHAR
   );
@@ -410,19 +416,21 @@ BEGIN
 
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_match_attempts)
   (
+    result_id VARCHAR,
     match_id VARCHAR,
     match_attempt_id VARCHAR,
     match_result VARIANT,
-    run_time TIMESTAMP,
+    run_time TIMESTAMP_TZ,
     status VARCHAR
   );
 
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts)
   (
+    result_id VARCHAR,
     match_id VARCHAR,
     match_attempt_id VARCHAR,
     match_result VARIANT,
-    run_time TIMESTAMP,
+    run_time TIMESTAMP_TZ,
     status VARCHAR
   );
 
@@ -507,12 +515,13 @@ BEGIN
   AS
   SELECT * FROM
       (SELECT
+          result_id,
           match_id,
           match_attempt_id,
           match_result,
           attempt_ts,
           status,
-          RANK() OVER (PARTITION BY match_id, match_attempt_id ORDER BY attempt_ts DESC) AS current_flag
+          RANK() OVER (PARTITION BY result_id ORDER BY attempt_ts DESC) AS current_flag
         FROM identifier(:snowflake_partner_dcr_internal_schema_dcn_partner_new_match_attempts)
         WHERE METADATA$ACTION = 'INSERT'
         ) a
@@ -606,9 +615,8 @@ BEGIN
     END IF;
   end for;
 
-  BEGIN TRANSACTION;
-  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_match_requests) SELECT :match_id, match_name, current_timestamp() FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id;
 
+  BEGIN TRANSACTION;
   let columns_res RESULTSET := (call optable_partnership.internal_schema.show_columns(:source_table));
   let c3 cursor for columns_res;
   for r in c3 do
@@ -637,6 +645,15 @@ BEGIN
       INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_id(identifier(:cn)), :match_id FROM identifier(:source_table);
     END IF;
   end for;
+  ALTER SESSION SET timezone = 'UTC';
+
+  let version_res RESULTSET := (SELECT version FROM optable_partnership.public.version);
+  let c4 cursor for version_res;
+  let version VARCHAR := 'dummy';
+  for r in c4 do
+    version := r.version;
+  end for;
+  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_match_requests) SELECT uuid_string(), :match_id, match_name, :version, current_timestamp() FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id;
   COMMIT;
 
   USE ROLE identifier(:snowflake_partner_role);
@@ -669,7 +686,7 @@ BEGIN
 END;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_get_results(dcn_slug VARCHAR, match_id VARCHAR)
-RETURNS TABLE(match_id VARCHAR, match_result VARIANT, run_time TIMESTAMP, status VARCHAR)
+RETURNS TABLE(match_id VARCHAR, match_result VARIANT, run_time TIMESTAMP_TZ, status VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
@@ -720,7 +737,7 @@ BEGIN
   let snowflake_partner_dcr_internal_schema_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
   let snowflake_partner_dcr_internal_schema_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
 
-  INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) SELECT match_id, match_attempt_id, match_result, attempt_ts, status FROM identifier(:snowflake_partner_dcr_internal_schema_new_match_attempts_all);
+  INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) SELECT result_id, match_id, match_attempt_id, match_result, attempt_ts, status FROM identifier(:snowflake_partner_dcr_internal_schema_new_match_attempts_all);
 
   let new_match_results RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts));
   let c2 cursor for new_match_results;
