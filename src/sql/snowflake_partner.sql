@@ -744,6 +744,7 @@ BEGIN
   for row_variable in c2 do
     let match_id VARCHAR := row_variable.match_id;
     BEGIN TRANSACTION;
+    DELETE FROM identifier(:snowflake_partner_dcr_internal_schema_match_attempts) WHERE match_id ILIKE :match_id;
     INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_match_attempts) SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) WHERE match_id ILIKE :match_id;
     DELETE FROM identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) WHERE match_id ILIKE :match_id;
     DELETE FROM identifier(:snowflake_partner_source_schema_profiles) WHERE match_id ILIKE :match_id;
