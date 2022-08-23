@@ -1,30 +1,20 @@
--- reset
--- USE ROLE accountadmin;
--- show warehouses;
--- drop role optable_cr_role;
--- drop database optable_partnership;
--- drop warehouse optable_partnership_setup;
---drop warehouse DCN_PARTNER_BD2_TF74409_JS73429_WAREHOUSE;
-
-
 -- Create roles (Done by DCN operator, not Optable)
-set optable_cr_role = 'optable-snowflake-cleanroom';
 USE ROLE securityadmin;
-CREATE OR REPLACE ROLE optable_cr_role;
-GRANT ROLE optable_cr_role TO ROLE sysadmin;
+CREATE OR REPLACE ROLE optable_snowflake_cleanroom;
+GRANT ROLE optable_snowflake_cleanroom TO ROLE sysadmin;
 
 -- Grant privileges to roles
 USE ROLE accountadmin;
-GRANT CREATE DATABASE ON ACCOUNT TO ROLE optable_cr_role WITH GRANT OPTION;
-GRANT CREATE SHARE ON ACCOUNT TO ROLE optable_cr_role WITH GRANT OPTION;
-GRANT IMPORT SHARE ON ACCOUNT TO ROLE optable_cr_role WITH GRANT OPTION;
-GRANT OVERRIDE SHARE RESTRICTIONS ON ACCOUNT TO ROLE optable_cr_role WITH GRANT OPTION;
-GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE optable_cr_role WITH GRANT OPTION;
+GRANT CREATE DATABASE ON ACCOUNT TO ROLE optable_snowflake_cleanroom WITH GRANT OPTION;
+GRANT CREATE SHARE ON ACCOUNT TO ROLE optable_snowflake_cleanroom WITH GRANT OPTION;
+GRANT IMPORT SHARE ON ACCOUNT TO ROLE optable_snowflake_cleanroom WITH GRANT OPTION;
+GRANT OVERRIDE SHARE RESTRICTIONS ON ACCOUNT TO ROLE optable_snowflake_cleanroom WITH GRANT OPTION;
+GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE optable_snowflake_cleanroom WITH GRANT OPTION;
 
 -- Assume that DCN operator pass the role to Optable)
 
 -- DCN Partner account setup #1
-USE ROLE optable_cr_role;
+USE ROLE optable_snowflake_cleanroom;
 show databases;
 
 -- Create database, schema and warehouse
@@ -33,7 +23,7 @@ CREATE SCHEMA IF NOT EXISTS optable_partnership.public;
 CREATE OR REPLACE WAREHOUSE optable_partnership_setup warehouse_size=xsmall;
 USE warehouse optable_partnership_setup;
 
-set dcn_slug = 'bd2';
+set dcn_slug = 'bd1';
 set snowflake_partner_account_locator_id = 'TF74409';
 set dcn_account_locator_id = current_account();
 set dcn_partner_username = current_user();
@@ -104,11 +94,11 @@ set snowflake_partner_dcr_db = 'snowflake_partner_' || $dcn_slug || '_' || $snow
 -- USE ROLE securityadmin;
 CREATE OR REPLACE ROLE identifier($dcn_partner_role);
 GRANT ROLE identifier($dcn_partner_role) TO ROLE sysadmin;
-GRANT ROLE identifier($dcn_partner_role) TO ROLE optable_cr_role;
+GRANT ROLE identifier($dcn_partner_role) TO ROLE optable_snowflake_cleanroom;
 GRANT ROLE identifier($dcn_partner_role) TO USER identifier($dcn_partner_username);
 
 -- Grant privileges to roles
-USE ROLE optable_cr_role;
+USE ROLE optable_snowflake_cleanroom;
 GRANT CREATE DATABASE ON ACCOUNT TO ROLE identifier($dcn_partner_role);
 GRANT CREATE SHARE ON ACCOUNT TO ROLE identifier($dcn_partner_role);
 GRANT IMPORT SHARE ON ACCOUNT TO ROLE identifier($dcn_partner_role);
@@ -189,7 +179,7 @@ ALTER SHARE identifier($dcn_partner_dcr_share) ADD ACCOUNTS = identifier($snowfl
 CREATE OR REPLACE SCHEMA identifier($dcn_partner_dcr_internal_schema);
 
 -- Create query request generation stored procedure
-USE ROLE optable_cr_role;
+USE ROLE optable_snowflake_cleanroom;
 CREATE OR REPLACE PROCEDURE optable_partnership.public.generate_match_request(current_dcn_slug VARCHAR, current_snowflake_account_locator_id VARCHAR, query_template_name VARCHAR, match_id VARCHAR, match_attempt_id VARCHAR, at_timestamp VARCHAR, wait_minutes REAL)
   RETURNS VARCHAR
   LANGUAGE JAVASCRIPT
@@ -308,7 +298,7 @@ GRANT USAGE ON PROCEDURE optable_partnership.public.generate_match_request(VARCH
 -- PART 2
 -- Create databases from incoming Party1 shares and grant privileges
 --USE ROLE accountadmin;
-USE ROLE optable_cr_role;
+USE ROLE optable_snowflake_cleanroom;
 CREATE OR REPLACE DATABASE identifier($snowflake_partner_dcr_db) FROM SHARE identifier($snowflake_partner_dcr_share);
 GRANT IMPORTED PRIVILEGES ON DATABASE identifier($snowflake_partner_dcr_db) TO ROLE identifier($dcn_partner_role);
 
