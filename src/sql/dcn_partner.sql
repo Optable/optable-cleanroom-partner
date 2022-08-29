@@ -15,7 +15,6 @@ GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE optable_snowflake_cleanroom WITH GRANT
 
 -- DCN Partner account setup #1
 USE ROLE optable_snowflake_cleanroom;
-show databases;
 
 -- Create database, schema and warehouse
 CREATE DATABASE IF NOT EXISTS optable_partnership;
@@ -46,13 +45,17 @@ $$
   var dcn_partner_warehouse = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_warehouse";
   var dcn_partner_source_db = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_source_db";
   var dcn_partner_dcr_db = "dcn_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_dcr_db";
+  var snowflake_partner_dcr_db = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_dcr_db";
+  var snowflake_partner_source_db = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + CURRENT_SNOWFLAKE_ACCOUNT_LOCATOR_ID + "_" + dcn_account_locator_id + "_source_db";
   var statements = [
     "USE ROLE accountadmin;",
     "DROP SHARE IF EXISTS " + dcn_partner_dcr_share,
     "DROP DATABASE IF EXISTS " + dcn_partner_dcr_db,
     "DROP DATABASE IF EXISTS " + dcn_partner_source_db,
     "DROP ROLE IF EXISTS " + dcn_partner_role,
-    "DROP WAREHOUSE IF EXISTS " + dcn_partner_warehouse
+    "DROP WAREHOUSE IF EXISTS " + dcn_partner_warehouse,
+    "DROP DATABASE IF EXISTS " + snowflake_partner_source_db,
+    "DROP DATABASE IF EXISTS " + snowflake_partner_dcr_db
   ];
   try {
     for (const stmt of statements) {

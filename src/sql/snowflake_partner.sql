@@ -77,186 +77,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.validate_query(current_dcn_slug VARCHAR)
-RETURNS VARCHAR
-LANGUAGE JAVASCRIPT
-EXECUTE AS CALLER
-AS
-$$
-  // VALIDATE_QUERY - Michael Rainey and Rachel Blum
-  // Adapted for Quickstart by Craig Warman
-  // Snowflake Computing, MAR 2022
-  //
-  // This stored procedure validates a query submitted to the QUERY_REQUESTS table in a
-  // simple two-party Snowflake Data Clean Room (DCR) deployment.   It is provided for
-  // illustrative purposes only as part of the "Build A Data Clean Room in Snowflake"
-  // Quickstart lab, and MUST NOT be used in a production environment.
-  //
-
-  try {
-    // Set up local variables
-    var current_account_stmt = snowflake.createStatement( {sqlText: "SELECT current_account()"} );
-    var current_account_result = current_account_stmt.execute();
-    current_account_result.next();
-    var snowflake_account_locator_id = current_account_result.getColumnValue(1);
-
-    var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CURRENT_DCN_SLUG + "' LIMIT 1"} );
-    var dcn_account_result = dcn_account_stmt.execute();
-    dcn_account_result.next();
-    var dcn_account_locator_id = dcn_account_result.getColumnValue(1);
-
-    var source_db_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + snowflake_account_locator_id + "_" + dcn_account_locator_id + "_source_db";
-    var dcr_db_internal_schema_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + snowflake_account_locator_id + "_" + dcn_account_locator_id + "_dcr_db.internal_schema";
-    var dcr_db_shared_schema_name = "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + snowflake_account_locator_id + "_" + dcn_account_locator_id + "_dcr_db.shared_schema";
-
-    var minimum_record_fetch_threshold = 3;
-    var completion_msg = "Finished query validation.";
-
-    // Get parameters
-    var account_name = CURRENT_DCN_SLUG.toUpperCase();
-
-    // Create a temporary table to store the most recent query request(s)
-    // The tempoary table name is generated using a UUID to ensure uniqueness.
-    // First, fetch a UUID string...
-    var UUID_sql = "SELECT replace(UUID_STRING(),'-','_');";
-    var UUID_statement = snowflake.createStatement( {sqlText: UUID_sql} );
-    var UUID_result = UUID_statement.execute();
-    UUID_result.next();
-    var UUID_str = UUID_result.getColumnValue(1);
-
-    // Next, create the temporary table...
-    // Note that its name incorporates the UUID fetched above
-    var temp_table_name = dcr_db_internal_schema_name + ".requests_temp_" + UUID_str;
-    var create_temp_table_sql = "CREATE OR REPLACE TEMPORARY TABLE " + temp_table_name + " ( \
-                                   request_id VARCHAR, match_id VARCHAR, match_attempt_id VARCHAR, at_timestamp VARCHAR, \
-                                   target_table_name VARCHAR, query_template_name VARCHAR);";
-    var create_temp_table_statement = snowflake.createStatement( {sqlText: create_temp_table_sql} );
-    var create_temp_table_results = create_temp_table_statement.execute();
-
-    // Finally, insert the most recent query requests into this tempoary table.
-    // Note that records are fetched from the NEW_REQUESTS_ALL view, which is built on a Table Stream object.
-    // This will cause the Table Stream's offset to be moved forward since a committed DML operation takes place here.
-    var insert_temp_table_sql = "INSERT INTO " + temp_table_name + " \
-                                 SELECT request_id, match_id, match_attempt_id, at_timestamp, target_table_name, query_template_name \
-                                 FROM " + dcr_db_internal_schema_name + ".new_requests_all;";
-    var insert_temp_table_statement = snowflake.createStatement( {sqlText: insert_temp_table_sql} );
-    var insert_temp_table_results = insert_temp_table_statement.execute();
-
-    // We're now ready to fetch query requests from that temporary table.
-    var query_requests_sql = "SELECT request_id, match_id, match_attempt_id, at_timestamp::string, target_table_name, query_template_name \
-                        FROM " + temp_table_name + ";";
-    var query_requests_statement = snowflake.createStatement( {sqlText: query_requests_sql} );
-    var query_requests_result = query_requests_statement.execute();
-
-    // This loop will iterate once for each query request.
-    while (query_requests_result.next()) {
-      var timestamp_validated = false;
-      var query_template_validated = false;
-      var approved_query_text = "NULL";
-      var comments = "DECLINED";
-      var request_status = "DECLINED";
-
-      var request_id = query_requests_result.getColumnValue(1);
-      var match_id = query_requests_result.getColumnValue(2);
-      var match_attempt_id = query_requests_result.getColumnValue(3);
-      var at_timestamp = query_requests_result.getColumnValue(4);
-      var target_table_name = query_requests_result.getColumnValue(5);
-      var query_template_name = query_requests_result.getColumnValue(6);
-
-      // Validate the AT_TIMESTAMP for this query request.
-      // Note that it must specify a timestamp from the past.
-      try {
-        var timezoneStmt = snowflake.createStatement( {sqlText: "alter session set timezone = 'UTC'"} )
-        timezoneStmt.execute();
-        var timestamp_sql = "SELECT CASE (to_timestamp('" + at_timestamp + "') < current_timestamp) WHEN TRUE THEN 'Valid' ELSE 'Not Valid' END;"
-        var timestamp_statement = snowflake.createStatement( {sqlText: timestamp_sql} );
-        var timestamp_result = timestamp_statement.execute();
-        timestamp_result.next();
-        timestamp_validated = (timestamp_result.getColumnValue(1) == "Valid");
-        if (!timestamp_validated) {
-          comments = "DECLINED because AT_TIMESTAMP must specify a timestamp from the past.";
-          }
-      }
-      catch (err) {
-        timestamp_validated = false;
-        comments = "DECLINED because AT_TIMESTAMP is not valid - Error message from Snowflake DB: " + err.message;
-      } // Timestamp validation work ends here.
-
-      if (timestamp_validated) {
-      // Fetch the template requested for the query.
-      var query_template_sql = "SELECT query_template_text FROM " + dcr_db_shared_schema_name + ".query_templates \
-                  WHERE UPPER(query_template_name) = '" + query_template_name.toUpperCase() + "' LIMIT 1;";
-      var query_template_statement = snowflake.createStatement( {sqlText: query_template_sql} );
-      var query_template_result = query_template_statement.execute();
-        query_template_result.next();
-        var query_text = query_template_result.getColumnValue(1);
-
-        query_template_validated = (query_text);
-
-        if (!query_template_validated) {
-          comments = "DECLINED because query template \"" + query_template_name + "\" does not exist.";}
-        else {
-          // At this point all validations are complete and the query can be approved.
-          request_status = "APPROVED";
-          comments = "APPROVED";
-
-          // First, build the approved query from the template as a CTAS...
-          approved_query_text = "INSERT INTO " + target_table_name + " " + query_text;
-          approved_query_text = approved_query_text.replace(/@match_id/g, match_id);
-          approved_query_text = approved_query_text.replace(/@threshold/g, minimum_record_fetch_threshold);
-          approved_query_text = approved_query_text.replace(/@attimestamp/g, at_timestamp);
-          approved_query_text = approved_query_text.replace(/@snowflake_partner_source_source_schema_profiles/g, "snowflake_partner_" + CURRENT_DCN_SLUG + "_" + snowflake_account_locator_id + "_" + dcn_account_locator_id + "_source_db.source_schema.profiles");
-          approved_query_text = approved_query_text.replace(/@dcn_partner_source_source_schema_profiles/g, "dcn_partner_" + CURRENT_DCN_SLUG + "_" + snowflake_account_locator_id + "_" + dcn_account_locator_id + "_source_db.source_schema.profiles");
-          approved_query_text = approved_query_text.replace(/@dcn_partner_source_information_schema_tables/g, "dcn_partner_" + CURRENT_DCN_SLUG + "_" + snowflake_account_locator_id + "_" + dcn_account_locator_id + "_source_db.information_schema.tables");
-          approved_query_text = String.fromCharCode(13, 36, 36) + approved_query_text + String.fromCharCode(13, 36, 36);  // Wrap the query text so that it can be passed to below SQL statements
-
-          // Next, check to see if the approved query already exists in the internal schema APPROVED_QUERY_REQUESTS table...
-          var approved_query_exists_sql = "SELECT count(*) FROM " + dcr_db_internal_schema_name + ".approved_query_requests \
-                                           WHERE query_text = " + approved_query_text + ";";
-          var approved_query_exists_statement = snowflake.createStatement( {sqlText: approved_query_exists_sql} );
-          var approved_query_exists_result = approved_query_exists_statement.execute();
-          approved_query_exists_result.next();
-          var approved_query_found = approved_query_exists_result.getColumnValue(1);
-
-          // Finally, insert the approved query into the internal schema APPROVED_QUERY_REQUESTS table if it doesn't already exist there.
-          if (approved_query_found == "0") {
-            var insert_approved_query_sql = "INSERT INTO " + dcr_db_internal_schema_name + ".approved_query_requests (query_name, query_text) \
-                             VALUES ('" + query_template_name + "', " + approved_query_text + ");";
-            var insert_approved_query_statement = snowflake.createStatement( {sqlText: insert_approved_query_sql} );
-            var insert_approved_query_result = insert_approved_query_statement.execute();
-          }
-        }
-      } // Template work ends here.
-
-    var timezoneStmt = snowflake.createStatement( {sqlText: "ALTER SESSION SET timezone = 'UTC'"} )
-    timezoneStmt.execute();
-    // Insert an acknowledgment record into the shared schema request_status table for the current query request.
-    var request_status_sql = "INSERT INTO " + dcr_db_shared_schema_name + ".request_status \
-                  (request_id, request_status, target_table_name, query_text, request_status_ts, comments, account_name) \
-                  VALUES (\
-                  '" + request_id + "', \
-                  '" + request_status + "', \
-                  '" + target_table_name + "',\
-                  " + approved_query_text + ", \
-                  CURRENT_TIMESTAMP(),\
-                  '" + comments + "',\
-                  '" + account_name + "');";
-    var request_status_statement = snowflake.createStatement( {sqlText: request_status_sql} );
-    var request_status_result = request_status_statement.execute();
-
-    } // Query request loop ends here.
-  }
-  catch (err) {
-    var result = "Failed: Code: " + err.code + "\n  State: " + err.state;
-    result += "\n  Message: " + err.message;
-    result += "\nStack Trace:\n" + err.stackTraceTxt;
-    return result;
-  }
-  return completion_msg;
-$$
-;
-
-CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.create_rap(snowflake_partner_role VARCHAR, dcr_rap VARCHAR, approved_query_requests VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.create_rap(snowflake_partner_role VARCHAR, dcr_rap VARCHAR, match_requests VARCHAR)
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
 EXECUTE AS CALLER
@@ -266,7 +87,7 @@ $$
     "USE ROLE " + SNOWFLAKE_PARTNER_ROLE,
     "CREATE OR REPLACE ROW ACCESS POLICY " + DCR_RAP + " AS (identifier VARCHAR, match_id VARCHAR) returns boolean ->" +
         "current_role() IN ('ACCOUNTADMIN', UPPER('" + SNOWFLAKE_PARTNER_ROLE + "'))" +
-        "OR EXISTS  (select query_text FROM " + APPROVED_QUERY_REQUESTS + " WHERE query_text=current_statement() OR query_text=sha2(current_statement()));"
+        "OR EXISTS  (select query_text FROM " + MATCH_REQUESTS + " WHERE query_text=current_statement() OR query_text=sha2(current_statement()));"
   ];
   try {
     for (const stmt of statements) {
@@ -303,9 +124,7 @@ BEGIN
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
   let snowflake_partner_dcr_shared_schema_query_templates VARCHAR := :snowflake_partner_dcr_shared_schema || '.query_templates';
   let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
-  let snowflake_partner_dcr_shared_schema_request_status VARCHAR := :snowflake_partner_dcr_shared_schema || '.request_status';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
-  let snowflake_partner_dcr_internal_schema_approved_query_requests VARCHAR := :snowflake_partner_dcr_internal_schema || '.approved_query_requests';
   let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
   let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.matches';
   let snowflake_partner_source_schema_dcr_rap VARCHAR := :snowflake_partner_source_schema || '.dcr_rap';
@@ -381,38 +200,20 @@ BEGIN
   WHERE snowflake_partner.match_id = '@match_id'
   AND exists (SELECT table_name FROM @dcn_partner_source_information_schema_tables WHERE table_schema = 'SOURCE_SCHEMA' AND table_name = 'PROFILES' AND table_type = 'BASE TABLE');$$);
 
-
-  -- Create a table for match_requests
+  -- Create request status table
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_match_requests)
   (
     request_id VARCHAR,
-    match_id VARCHAR UNIQUE,
-    name VARCHAR,
+    match_id VARCHAR,
+    match_name VARCHAR,
     version VARCHAR,
-    create_time TIMESTAMP_TZ
-  );
-
-  -- Create request status table
-  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_request_status)
-  (
-    request_id VARCHAR,
-    request_status VARCHAR,
     target_table_name VARCHAR,
     query_text VARCHAR,
-    request_status_ts TIMESTAMP_TZ,
-    comments VARCHAR,
-    account_name VARCHAR
+    at_timestamp TIMESTAMP_TZ
   );
 
   -- Create clean room internal schema and objects
   CREATE OR REPLACE SCHEMA identifier(:snowflake_partner_dcr_internal_schema);
-
-  -- Create approved query requests table
-  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_approved_query_requests)
-  (
-    query_name VARCHAR,
-    query_text VARCHAR
-  );
 
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_match_attempts)
   (
@@ -442,7 +243,7 @@ BEGIN
 
   USE ROLE accountadmin;
   -- Create and apply row access policy to profiles source table
-  call optable_partnership.internal_schema.create_rap(:snowflake_partner_role, :snowflake_partner_source_schema_dcr_rap, :snowflake_partner_dcr_internal_schema_approved_query_requests);
+  call optable_partnership.internal_schema.create_rap(:snowflake_partner_role, :snowflake_partner_source_schema_dcr_rap, :snowflake_partner_dcr_shared_schema_match_requests);
 
   USE ROLE identifier(:snowflake_partner_role);
   ALTER TABLE identifier(:snowflake_partner_source_schema_profiles) add row access policy identifier(:snowflake_partner_source_schema_dcr_rap) on (identifier, match_id);
@@ -455,9 +256,8 @@ BEGIN
     'GRANT USAGE ON DATABASE ' || :snowflake_partner_dcr_db || ' TO SHARE ' || :snowflake_partner_dcr_share,
     'GRANT USAGE ON SCHEMA ' || :snowflake_partner_dcr_shared_schema || ' TO SHARE ' || :snowflake_partner_dcr_share,
     'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_query_templates || ' TO SHARE ' || :snowflake_partner_dcr_share,
-    'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_match_requests || ' TO SHARE ' || :snowflake_partner_dcr_share,
     'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_matches || ' TO SHARE ' || :snowflake_partner_dcr_share,
-    'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_request_status || ' TO SHARE ' || :snowflake_partner_dcr_share,
+    'GRANT SELECT ON TABLE ' || :snowflake_partner_dcr_shared_schema_match_requests || ' TO SHARE ' || :snowflake_partner_dcr_share,
 
     -- Grant object privileges to source share
     'GRANT USAGE ON DATABASE ' || :snowflake_partner_source_db || ' TO SHARE ' || :snowflake_partner_source_share,
@@ -536,50 +336,6 @@ BEGIN
   RETURN 'Partner ' || :dcn_slug || ' is successfully connected.';
 END;
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.match_create(dcn_slug VARCHAR, match_name VARCHAR)
-RETURNS TABLE(match_id VARCHAR)
-LANGUAGE SQL
-EXECUTE AS CALLER
-AS
-BEGIN
-  let snowflake_partner_account_locator_id VARCHAR := current_account();
-  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
-  let c1 cursor for account_res;
-  let dcn_account_locator_id VARCHAR := 'dummy';
-  for row_variable in c1 do
-    dcn_account_locator_id := row_variable.dcn_account_locator_id;
-  end for;
-
-  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
-  let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
-  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.matches';
-  let uuid := uuid_string();
-  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_matches) VALUES (:uuid, :match_name);
-  let res RESULTSET := (SELECT match_id FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :uuid);
-  return table(res);
-END;
-
-CREATE OR REPLACE PROCEDURE optable_partnership.public.match_list(dcn_slug VARCHAR)
-RETURNS TABLE(match_id VARCHAR, match_name VARCHAR)
-LANGUAGE SQL
-EXECUTE AS CALLER
-AS
-BEGIN
-  let snowflake_partner_account_locator_id VARCHAR := current_account();
-  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug LIMIT 1);
-  let c1 cursor for account_res;
-  let dcn_account_locator_id VARCHAR := 'dummy';
-  for row_variable in c1 do
-    dcn_account_locator_id := row_variable.dcn_account_locator_id;
-  end for;
-
-  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
-  let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
-  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.matches';
-  let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_shared_schema_matches));
-  RETURN table(res);
-END;
-
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_run(dcn_slug VARCHAR, match_id VARCHAR, source_table VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
@@ -598,23 +354,25 @@ BEGIN
   let snowflake_partner_warehouse VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_warehouse';
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
-  let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
   let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.matches';
+  let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
+  let snowflake_partner_dcr_shared_schema_query_templates VARCHAR := :snowflake_partner_dcr_shared_schema || '.query_templates';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
-  let snowflake_partner_dcr_internal_schema_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
   let snowflake_partner_dcr_internal_schema_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
   let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_source_db';
   let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
   let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
+  let dcn_partner_source_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_source_db';
+  let dcn_partner_source_schema VARCHAR := :dcn_partner_source_db || '.source_schema';
+  let dcn_partner_source_schema_profiles VARCHAR := :dcn_partner_source_schema || '.profiles';
+  let dcn_partner_information_schema_tables VARCHAR := :dcn_partner_source_db || '.information_schema.tables';
+  let target_table_name VARCHAR := REPLACE(dcn_partner_source_schema_profiles || '_' || :match_id, '-', '_');
 
-  let matches_res RESULTSET := (SELECT COUNT(*) AS count FROM identifier(:snowflake_partner_dcr_shared_schema_match_requests) WHERE match_id ILIKE :match_id);
+  let matches_res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_source_schema_profiles) WHERE match_id ILIKE :match_id LIMIT 1);
   let c2 cursor for matches_res;
   for row_variable in c2 do
-    IF (row_variable.count > 0) THEN
-        RETURN 'You cannot schedule the same match more than once at a time. Match ' || :match_id || ' is already running';
-    END IF;
+    RETURN 'You cannot schedule the same match more than once at a time. Match ' || :match_id || ' is already running';
   end for;
-
 
   BEGIN TRANSACTION;
   let columns_res RESULTSET := (call optable_partnership.internal_schema.show_columns(:source_table));
@@ -653,19 +411,38 @@ BEGIN
   for r in c4 do
     version := r.version;
   end for;
-  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_match_requests) SELECT uuid_string(), :match_id, match_name, :version, current_timestamp() FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id;
+
+
+  let template_res RESULTSET := (SELECT query_template_text FROM identifier(:snowflake_partner_dcr_shared_schema_query_templates) WHERE query_template_name LIKE 'match_attempt' LIMIT 1);
+  let c5 cursor for template_res;
+  let query_template_text VARCHAR := 'dummy';
+  for row_variable in c5 do
+    query_template_text := row_variable.query_template_text;
+    INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_match_requests)
+    SELECT
+      uuid_string(),
+      :match_id,
+      match_name,
+      :version,
+      :target_table_name,
+      'INSERT INTO ' || :target_table_name || ' ' || REPLACE(
+        REPLACE(
+          REPLACE(
+            REPLACE(
+               REPLACE(:query_template_text,
+              '@dcn_partner_source_source_schema_profiles', :dcn_partner_source_schema_profiles),
+            '@attimestamp',  current_timestamp()),
+          '@snowflake_partner_source_source_schema_profiles', :snowflake_partner_source_schema_profiles),
+        '@match_id', :match_id),
+      '@dcn_partner_source_information_schema_tables', :dcn_partner_information_schema_tables),
+      current_timestamp() FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id;
+  end for;
   COMMIT;
 
   USE ROLE identifier(:snowflake_partner_role);
   USE WAREHOUSE identifier(:snowflake_partner_warehouse);
 
   let tasks_stmts ARRAY := [
-    -- create validator task
-    'CREATE OR REPLACE TASK ' || :snowflake_partner_dcr_internal_schema_validator || ' ' ||
-      'SCHEDULE = \'USING CRON * * * * * UTC\' '||
-      'ALLOW_OVERLAPPING_EXECUTION = FALSE ' ||
-    'AS ' ||
-    'call optable_partnership.internal_schema.validate_query(\'' || :dcn_slug || '\')',
     -- create fetcher task
     'CREATE OR REPLACE TASK ' || :snowflake_partner_dcr_internal_schema_fetcher || ' ' ||
       'SCHEDULE = \'USING CRON * * * * * UTC\' ' ||
@@ -678,12 +455,13 @@ BEGIN
      EXECUTE IMMEDIATE replace(:tasks_stmts[i-1], '"', '');
    END FOR;
 
-  -- Start the validator task
-  ALTER TASK identifier(:snowflake_partner_dcr_internal_schema_validator) RESUME;
   -- Start the task to fetch match results from the DCN
   ALTER TASK identifier(:snowflake_partner_dcr_internal_schema_fetcher) RESUME;
 
+  RETURN 'A match attempt is successfully scheduled';
 END;
+
+
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_get_results(dcn_slug VARCHAR, match_id VARCHAR)
 RETURNS TABLE(match_id VARCHAR, match_result VARIANT, run_time TIMESTAMP_TZ, status VARCHAR)
@@ -722,9 +500,7 @@ BEGIN
   let snowflake_partner_account_locator_id VARCHAR := current_account();
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
-  let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
-  let snowflake_partner_dcr_shared_internal_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
   let snowflake_partner_dcr_shared_internal_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
   let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let dcn_partner_dcr_shared_schema_match_attempts VARCHAR := :dcn_partner_dcr_db || '.shared_schema.match_attempts';
@@ -734,7 +510,6 @@ BEGIN
   let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
   let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
   let snowflake_partner_dcr_internal_schema_pending_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.pending_match_attempts';
-  let snowflake_partner_dcr_internal_schema_validator VARCHAR := :snowflake_partner_dcr_internal_schema || '.validator_task';
   let snowflake_partner_dcr_internal_schema_fetcher VARCHAR := :snowflake_partner_dcr_internal_schema || '.fetcher_task';
 
   INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) SELECT result_id, match_id, match_attempt_id, match_result, attempt_ts, status FROM identifier(:snowflake_partner_dcr_internal_schema_new_match_attempts_all);
@@ -748,19 +523,17 @@ BEGIN
     INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_match_attempts) SELECT * FROM identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) WHERE match_id ILIKE :match_id;
     DELETE FROM identifier(:snowflake_partner_dcr_internal_schema_pending_match_attempts) WHERE match_id ILIKE :match_id;
     DELETE FROM identifier(:snowflake_partner_source_schema_profiles) WHERE match_id ILIKE :match_id;
-    DELETE FROM identifier(:snowflake_partner_dcr_shared_schema_match_requests) WHERE match_id ILIKE :match_id;
     COMMIT;
   end for;
 
-  let current_requests_res RESULTSET := (SELECT COUNT(*) AS count FROM identifier(:snowflake_partner_dcr_shared_schema_match_requests));
+  let current_requests_res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_source_schema_profiles) LIMIT 1);
   let c3 cursor for current_requests_res;
-  let no_requests BOOLEAN := TRUE;
+  let no_more_matches BOOLEAN := TRUE;
   for row_variable in c3 do
-    no_requests := row_variable.count = 0;
+    more_matches := FALSE;
   end for;
 
-  IF (no_requests) then
-    DROP TASK identifier(:snowflake_partner_dcr_internal_schema_validator);
+  IF (no_more_matches) then
     DROP TASK identifier(:snowflake_partner_dcr_internal_schema_fetcher);
   END IF;
 END;
@@ -849,7 +622,7 @@ CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_id(id VARCH
 RETURNS VARCHAR
 AS
 $$
-  'temporary:' || id
+  id
 $$;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.show_columns(source_table VARCHAR)
