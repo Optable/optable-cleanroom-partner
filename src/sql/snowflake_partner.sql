@@ -530,7 +530,7 @@ BEGIN
   let c3 cursor for current_requests_res;
   let no_more_matches BOOLEAN := TRUE;
   for row_variable in c3 do
-    more_matches := FALSE;
+    no_more_matches := FALSE;
   end for;
 
   IF (no_more_matches) then
