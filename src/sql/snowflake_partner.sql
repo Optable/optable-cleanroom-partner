@@ -128,6 +128,7 @@ BEGIN
   let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.matches';
+  let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
   let snowflake_partner_source_schema_dcr_rap VARCHAR := :snowflake_partner_source_schema || '.dcr_rap';
   let dcn_partner_dcr_share VARCHAR := :dcn_account_locator_id || '.dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_share';
   let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
@@ -217,6 +218,16 @@ BEGIN
     match_name VARCHAR
   );
 
+  CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_match_attempts)
+  (
+    request_id VARCHAR,
+    match_id VARCHAR,
+    match_attempt_id VARCHAR,
+    match_result VARIANT,
+    attempt_ts TIMESTAMP_TZ,
+    status VARCHAR
+  );
+
   -- Create and apply row access policy to profiles source table
   call optable_partnership.internal_schema.create_rap(:snowflake_partner_role, :snowflake_partner_source_schema_dcr_rap, :snowflake_partner_dcr_shared_schema_match_requests);
 
@@ -285,6 +296,7 @@ BEGIN
   let snowflake_partner_dcr_shared_schema_match_requests VARCHAR := :snowflake_partner_dcr_shared_schema || '.match_requests';
   let snowflake_partner_dcr_shared_schema_query_templates VARCHAR := :snowflake_partner_dcr_shared_schema || '.query_templates';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
+  let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
   let snowflake_partner_dcr_internal_schema_cleaner VARCHAR := :snowflake_partner_dcr_internal_schema || '.cleaner_task';
   let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_source_db';
   let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
@@ -341,6 +353,7 @@ BEGIN
   end for;
 
 
+  let attempt_ts TIMESTAMP_TZ := current_timestamp();
   let template_res RESULTSET := (SELECT query_template_text FROM identifier(:snowflake_partner_dcr_shared_schema_query_templates) WHERE query_template_name LIKE 'match_attempt' LIMIT 1);
   let c5 cursor for template_res;
   let query_template_text VARCHAR := 'dummy';
@@ -363,8 +376,9 @@ BEGIN
           '@snowflake_partner_source_source_schema_profiles', :snowflake_partner_source_schema_profiles),
         '@match_id', :match_id),
       '@dcn_partner_source_information_schema_tables', :dcn_partner_information_schema_tables),
-      current_timestamp() FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id;
+      :attempt_ts FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id;
   end for;
+  INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_match_attempts) SELECT :request_id, :match_id, '', parse_json('{}'), :attempt_ts, 'establishing connection';
   COMMIT;
 
   USE ROLE identifier(:snowflake_partner_role);
@@ -408,7 +422,26 @@ BEGIN
   let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let dcn_partner_dcr_shared_schema VARCHAR := :dcn_partner_dcr_db || '.shared_schema';
   let dcn_partner_dcr_shared_schema_match_attempts VARCHAR := :dcn_partner_dcr_shared_schema || '.match_attempts';
-  let res RESULTSET := (SELECT match_id, request_id, match_result, attempt_ts, status FROM identifier(:dcn_partner_dcr_shared_schema_match_attempts) WHERE match_id ILIKE :match_id);
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :dcn_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
+  let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
+  let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
+  let res RESULTSET := (
+    WITH dcn AS (
+        SELECT match_id, request_id, match_result, attempt_ts, status
+        FROM identifier(:dcn_partner_dcr_shared_schema_match_attempts)
+        WHERE match_id ILIKE :match_id
+    ),
+    snowflake AS (
+        SELECT match_id, request_id, match_result, attempt_ts, status
+        FROM identifier(:snowflake_partner_dcr_internal_schema_match_attempts)
+        WHERE match_id ILIKE :match_id
+        AND request_id NOT IN (SELECT request_id FROM dcn)
+    )
+    SELECT * FROM dcn
+    UNION
+    SELECT * FROM snowflake
+    ORDER BY attempt_ts DESC
+  );
   return table(res);
 END;
 
