@@ -206,7 +206,8 @@ BEGIN
     version VARCHAR,
     target_table_name VARCHAR,
     query_text VARCHAR,
-    at_timestamp TIMESTAMP_TZ
+    at_timestamp TIMESTAMP_TZ,
+    at_timestamp_text VARCHAR
   );
 
   -- Create clean room internal schema and objects
@@ -372,10 +373,11 @@ BEGIN
             REPLACE(
                REPLACE(:query_template_text,
               '@dcn_partner_source_source_schema_profiles', :dcn_partner_source_schema_profiles),
-            '@attimestamp',  current_timestamp()),
+            '@attimestamp',  :attempt_ts),
           '@snowflake_partner_source_source_schema_profiles', :snowflake_partner_source_schema_profiles),
         '@match_id', :match_id),
       '@dcn_partner_source_information_schema_tables', :dcn_partner_information_schema_tables),
+      :attempt_ts,
       :attempt_ts FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id;
   end for;
   INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_match_attempts) SELECT :request_id, :match_id, '', parse_json('{}'), :attempt_ts, 'establishing connection';
