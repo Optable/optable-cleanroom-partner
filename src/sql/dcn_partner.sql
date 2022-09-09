@@ -20,11 +20,6 @@ USE ROLE optable_snowflake_cleanroom;
 CREATE DATABASE IF NOT EXISTS optable_partnership;
 CREATE SCHEMA IF NOT EXISTS optable_partnership.public;
 CREATE OR REPLACE WAREHOUSE optable_partnership_setup warehouse_size=xsmall;
-CREATE TABLE IF NOT EXISTS otpable_partnership.public.profiles
-(
-  identifier VARCHAR NOT NULL
-);
-
 USE warehouse optable_partnership_setup;
 
 set dcn_slug = 'bd1';
@@ -124,8 +119,10 @@ USE WAREHOUSE identifier($dcn_partner_warehouse);
 CREATE OR REPLACE DATABASE identifier($dcn_partner_source_db);
 CREATE OR REPLACE SCHEMA identifier($dcn_partner_source_schema);
 
-CREATE VIEW IF NOT EXISTS identifier($dcn_partner_source_schema_profiles) AS
-SELECT * FROM optable_partnership.public.profiles
+CREATE OR REPLACE TABLE identifier($dcn_partner_source_schema_profiles)
+(
+  identifier VARCHAR NOT NULL
+);
 
 -- Create clean room database
 CREATE OR REPLACE DATABASE identifier($dcn_partner_dcr_db);
