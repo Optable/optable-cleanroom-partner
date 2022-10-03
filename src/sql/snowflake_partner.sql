@@ -147,6 +147,7 @@ BEGIN
   GRANT IMPORT SHARE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
 
   GRANT USAGE ON DATABASE optable_partnership TO ROLE identifier(:snowflake_partner_role);
+  GRANT USAGE ON WAREHOUSE optable_partnership_setup TO ROLE identifier(:snowflake_partner_role);
   GRANT USAGE ON SCHEMA optable_partnership.public TO ROLE identifier(:snowflake_partner_role);
   GRANT USAGE ON SCHEMA optable_partnership.internal_schema TO ROLE identifier(:snowflake_partner_role);
   GRANT ALL privileges ON ALL PROCEDURES IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
@@ -378,6 +379,7 @@ BEGIN
   COMMIT;
 
   USE ROLE identifier(:snowflake_partner_role);
+  USE WAREHOUSE optable_partnership_setup;
 
   let tasks_stmts ARRAY := [
     -- create cleaner task
