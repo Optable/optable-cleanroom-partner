@@ -4,7 +4,7 @@ CREATE DATABASE IF NOT EXISTS optable_partnership;
 CREATE SCHEMA IF NOT EXISTS optable_partnership.public;
 CREATE SCHEMA IF NOT EXISTS optable_partnership.internal_schema;
 CREATE OR REPLACE WAREHOUSE optable_partnership_setup warehouse_size=xsmall;
-USE warehouse optable_partnership_setup;
+USE WAREHOUSE optable_partnership_setup;
 
 CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_partners(dcn_slug VARCHAR NOT NULL, dcn_account_locator_id VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL);
 CREATE TABLE IF NOT EXISTS optable_partnership.public.version(version VARCHAR NOT NULL);
@@ -43,7 +43,6 @@ $$
     "DROP DATABASE IF EXISTS " + snowflake_partner_source_db,
     "DROP DATABASE IF EXISTS " + snowflake_partner_dcr_db,
     "DROP ROLE IF EXISTS " + snowflake_partner_role,
-    "DROP WAREHOUSE IF EXISTS " + snowflake_partner_warehouse,
     "DROP DATABASE IF EXISTS " + dcn_partner_dcr_db,
     "DELETE FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE '" + CURRENT_DCN_SLUG + "'"
   ];
@@ -146,7 +145,6 @@ BEGIN
   GRANT CREATE DATABASE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
   GRANT CREATE SHARE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
   GRANT IMPORT SHARE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
-  GRANT CREATE WAREHOUSE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
 
   GRANT USAGE ON DATABASE optable_partnership TO ROLE identifier(:snowflake_partner_role);
   GRANT USAGE ON SCHEMA optable_partnership.public TO ROLE identifier(:snowflake_partner_role);
@@ -161,8 +159,6 @@ BEGIN
 
   -- Create virtual warehouse
   USE ROLE identifier(:snowflake_partner_role);
-  CREATE OR REPLACE WAREHOUSE identifier(:snowflake_partner_warehouse) warehouse_size=xsmall;
-  USE WAREHOUSE identifier(:snowflake_partner_warehouse);
 
   -- Create source database and schema, along with customer table populated with synthetic data
   -- Note that this dataset has demographics included
@@ -191,7 +187,7 @@ BEGIN
 
   DELETE FROM identifier(:snowflake_partner_dcr_shared_schema_query_templates);  -- Run this if you change any of the below queries
   INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_query_templates)
-  VALUES ('match_attempt', $$SELECT dcn_partner.identifier AS id FROM @dcn_partner_source_source_schema_profiles at(timestamp=>'@attimestamp'::timestamp_ntz) dcn_partner
+  VALUES ('match_attempt', $$SELECT dcn_partner.identifier AS id FROM @dcn_partner_source_source_schema_profiles dcn_partner
   INNER JOIN @snowflake_partner_source_source_schema_profiles snowflake_partner
   ON dcn_partner.identifier = snowflake_partner.identifier
   WHERE snowflake_partner.match_id = '@match_id'
@@ -370,10 +366,8 @@ BEGIN
       'INSERT INTO ' || :target_table_name || ' ' || REPLACE(
         REPLACE(
           REPLACE(
-            REPLACE(
-               REPLACE(:query_template_text,
-              '@dcn_partner_source_source_schema_profiles', :dcn_partner_source_schema_profiles),
-            '@attimestamp',  :attempt_ts),
+             REPLACE(:query_template_text,
+            '@dcn_partner_source_source_schema_profiles', :dcn_partner_source_schema_profiles),
           '@snowflake_partner_source_source_schema_profiles', :snowflake_partner_source_schema_profiles),
         '@match_id', :match_id),
       '@dcn_partner_source_information_schema_tables', :dcn_partner_information_schema_tables),
@@ -384,7 +378,6 @@ BEGIN
   COMMIT;
 
   USE ROLE identifier(:snowflake_partner_role);
-  USE WAREHOUSE identifier(:snowflake_partner_warehouse);
 
   let tasks_stmts ARRAY := [
     -- create cleaner task
