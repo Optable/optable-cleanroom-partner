@@ -136,6 +136,9 @@ BEGIN
   -- Create roles
 
   USE ROLE securityadmin;
+  DELETE FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug;
+  INSERT INTO optable_partnership.public.dcn_partners (dcn_slug, dcn_account_locator_id, snowflake_partner_role) VALUES (:dcn_slug, :dcn_account_locator_id, :snowflake_partner_role);
+
   CREATE OR REPLACE ROLE identifier(:snowflake_partner_role);
   GRANT ROLE identifier(:snowflake_partner_role) TO ROLE sysadmin;
   GRANT ROLE identifier(:snowflake_partner_role) TO USER identifier(:snowflake_partner_username);
@@ -265,9 +268,6 @@ BEGIN
 
   -- Create Table Stream on shared query requests table
   USE ROLE accountadmin;
-
-  DELETE FROM optable_partnership.public.dcn_partners WHERE dcn_slug ILIKE :dcn_slug;
-  INSERT INTO optable_partnership.public.dcn_partners (dcn_slug, dcn_account_locator_id, snowflake_partner_role) VALUES (:dcn_slug, :dcn_account_locator_id, :snowflake_partner_role);
 
   RETURN 'Partner ' || :dcn_slug || ' is successfully connected.';
 END;
@@ -499,7 +499,13 @@ CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_email(id VA
 RETURNS VARCHAR
 AS
 $$
-  'e:' || id
+  CASE
+    WHEN LENGTH(REPLACE(id, 'e:', '')) <> 64 THEN
+      'e:'|| SHA2(REPLACE(TRIM(id), 'e:', ''), 256)
+    WHEN TRY_HEX_DECODE_BINARY(id) IS NULL THEN
+      'e:'|| SHA2(TRIM(id), 256)
+    ELSE 'e:' || id
+  END
 $$;
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_apple(id VARCHAR)
@@ -555,7 +561,13 @@ CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_phone(id VA
 RETURNS VARCHAR
 AS
 $$
-  'p:' || id
+  CASE
+    WHEN LENGTH(REPLACE(id, 'p:', '')) <> 64 THEN
+      'p:'|| SHA2(REPLACE(TRIM(id), 'p:', ''), 256)
+    WHEN TRY_HEX_DECODE_BINARY(id) IS NULL THEN
+      'p:'|| SHA2(TRIM(id), 256)
+    ELSE 'p:' || id
+  END
 $$;
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_net_id(id VARCHAR)
@@ -569,8 +581,36 @@ CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_id(id VARCH
 RETURNS VARCHAR
 AS
 $$
-  id
+  CASE
+    WHEN CONTAINS(id, ':') THEN
+      CASE
+        WHEN CONTAINS(id, 'e') THEN
+          CASE
+            WHEN LENGTH(REPLACE(id, 'e:', '')) <> 64 THEN
+              'e:'|| SHA2(REPLACE(TRIM(id), 'e:', ''), 256)
+            WHEN TRY_HEX_DECODE_BINARY(REPLACE(id, 'e:', '')) IS NULL THEN
+              'e:'|| SHA2(REPLACE(TRIM(id), 'e:', ''), 256)
+            ELSE id
+          END
+        WHEN CONTAINS(id, 'p') THEN
+          CASE
+            WHEN LENGTH(REPLACE(id, 'p:', '')) <> 64 THEN
+              'p:'|| SHA2(REPLACE(TRIM(id), 'p:', ''), 256)
+            WHEN TRY_HEX_DECODE_BINARY(REPLACE(id, 'p:', '')) IS NULL THEN
+              'e:'|| SHA2(REPLACE(id, 'p:', ''), 256)
+            ELSE id
+          END
+        ELSE id
+      END
+    ELSE
+      CASE
+        WHEN CONTAINS(id, '@') THEN
+          'e:'|| SHA2(TRIM(id), 256)
+        ELSE 'p:'|| SHA2(TRIM(id), 256)
+      END
+  END
 $$;
+
 
 CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.show_columns(source_table VARCHAR)
 RETURNS TABLE(column_name VARCHAR)
