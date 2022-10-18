@@ -306,6 +306,12 @@ BEGIN
   let target_table_name VARCHAR := REPLACE(dcn_partner_source_schema_profiles || '_' || :match_id, '-', '_');
   let request_id VARCHAR := uuid_string();
 
+  USE ROLE identifier(:snowflake_partner_role);
+  USE WAREHOUSE optable_partnership_setup;
+  
+  -- Make sure we have access to the source table:
+  SELECT COUNT(*) FROM identifier(:source_table);
+                                
   let matches_res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_source_schema_profiles) WHERE match_id ILIKE :match_id LIMIT 1);
   let c2 cursor for matches_res;
   for row_variable in c2 do
@@ -377,9 +383,6 @@ BEGIN
   end for;
   INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_match_attempts) SELECT :request_id, :match_id, '', parse_json('{}'), :attempt_ts, 'establishing connection';
   COMMIT;
-
-  USE ROLE identifier(:snowflake_partner_role);
-  USE WAREHOUSE optable_partnership_setup;
 
   let tasks_stmts ARRAY := [
     -- create cleaner task
