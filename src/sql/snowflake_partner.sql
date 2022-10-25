@@ -614,6 +614,47 @@ $$
   END
 $$;
 
+CREATE OR REPLACE PROCEDURE optable_partnership.public.match_create(partnership_slug VARCHAR, match_name VARCHAR)
+RETURNS TABLE(match_id VARCHAR)
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  let snowflake_partner_account_locator_id VARCHAR := current_account();
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
+  let c1 cursor for account_res;
+  let dcn_account_locator_id VARCHAR := 'dummy';
+  for row_variable in c1 do
+    dcn_account_locator_id := row_variable.dcn_account_locator_id;
+  end for;
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
+  let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
+  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.matches';
+  let uuid := uuid_string();
+  INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_matches) VALUES (:uuid, :match_name);
+  let res RESULTSET := (SELECT match_id FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :uuid);
+  return table(res);
+END;
+
+CREATE OR REPLACE PROCEDURE optable_partnership.public.match_list(partnership_slug VARCHAR)
+RETURNS TABLE(match_id VARCHAR, match_name VARCHAR)
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  let snowflake_partner_account_locator_id VARCHAR := current_account();
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
+  let c1 cursor for account_res;
+  let dcn_account_locator_id VARCHAR := 'dummy';
+  for row_variable in c1 do
+    dcn_account_locator_id := row_variable.dcn_account_locator_id;
+  end for;
+  let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
+  let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
+  let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.matches';
+  let res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_shared_schema_matches));
+  RETURN table(res);
+END;
 
 CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.show_columns(source_table VARCHAR)
 RETURNS TABLE(column_name VARCHAR)
