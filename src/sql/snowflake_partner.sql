@@ -312,6 +312,17 @@ BEGIN
   -- Make sure we have access to the source table:
   SELECT COUNT(*) FROM identifier(:source_table);
 
+  let matches_id_res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id LIMIT 1);
+  let match_c1 cursor for matches_id_res;
+  let match_is_missing BOOLEAN := true;
+  for row_variable in match_c1 do
+    match_is_missing := false;
+  end for;
+  IF (match_is_missing = TRUE) THEN
+    RETURN 'Match ' || :match_id || ' is not found';
+  END IF;
+
+
   let matches_res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_source_schema_profiles) WHERE match_id ILIKE :match_id LIMIT 1);
   let c2 cursor for matches_res;
   for row_variable in c2 do
@@ -402,8 +413,6 @@ BEGIN
 
   RETURN 'A match attempt is successfully scheduled';
 END;
-
-
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_get_results(partnership_slug VARCHAR, match_id VARCHAR)
 RETURNS TABLE(match_id VARCHAR, match_run_id VARCHAR, match_result VARIANT, run_time TIMESTAMP_TZ, status VARCHAR)
