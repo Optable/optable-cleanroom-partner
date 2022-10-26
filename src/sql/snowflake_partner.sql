@@ -666,3 +666,26 @@ BEGIN
     let columns_res RESULTSET := (SELECT "column_name" from table(result_scan(last_query_id())));
     return TABLE(columns_res);
 END;
+
+CREATE OR REPLACE PROCEDURE optable_partnership.public.grant_permission(partnership_slug VARCHAR, database_name VARCHAR, schema_name VARCHAR)
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
+  let c1 cursor for account_res;
+  let dcn_account_locator_id VARCHAR := 'dummy';
+  for row_variable in c1 do
+    dcn_account_locator_id := row_variable.dcn_account_locator_id;
+  end for;
+
+  let snowflake_partner_account_locator_id VARCHAR := current_account();
+
+  let role_name VARCHAR := 'snowflake_partner_' || partnership_slug || '_' || snowflake_partner_account_locator_id || '_' || dcn_account_locator_id || '_role';
+  let schema_name_full VARCHAR := :database_name || '.' || :schema_name;
+  GRANT SELECT ON ALL TABLES IN DATABASE identifier(:database_name) TO ROLE identifier(:role_name);
+  GRANT USAGE ON DATABASE identifier(:database_name) TO ROLE identifier(:role_name);
+  GRANT USAGE ON SCHEMA identifier(:schema_name_full) TO ROLE identifier(:role_name);
+  RETURN 'permissions granted';
+END;
