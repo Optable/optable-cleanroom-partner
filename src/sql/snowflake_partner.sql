@@ -1,11 +1,9 @@
--- Snowflake Partner setup script
 USE ROLE accountadmin;
 CREATE DATABASE IF NOT EXISTS optable_partnership;
 CREATE SCHEMA IF NOT EXISTS optable_partnership.public;
 CREATE SCHEMA IF NOT EXISTS optable_partnership.internal_schema;
 CREATE OR REPLACE WAREHOUSE optable_partnership_setup warehouse_size=xsmall;
 USE WAREHOUSE optable_partnership_setup;
-
 CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_partners(org VARCHAR NOT NULL, partnership_slug VARCHAR NOT NULL, dcn_account_locator_id VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL);
 CREATE TABLE IF NOT EXISTS optable_partnership.public.version(version VARCHAR NOT NULL);
 DELETE FROM optable_partnership.public.version;
@@ -61,6 +59,7 @@ $$
 $$
 ;
 
+
 CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_list()
 RETURNS TABLE(organization_name VARCHAR, partnership_slug VARCHAR, dcn_account_locator_id VARCHAR, snowflake_partner_role VARCHAR, status VARCHAR)
 LANGUAGE SQL
@@ -76,7 +75,9 @@ BEGIN
    res := (EXECUTE IMMEDIATE :QUERY);
    return table(res);
 END;
-$$;
+$$
+;
+
 
 CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.create_rap(snowflake_partner_role VARCHAR, dcr_rap VARCHAR, match_requests VARCHAR)
 RETURNS VARCHAR
@@ -105,13 +106,13 @@ $$
 $$
 ;
 
+
 CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_connect(org VARCHAR, partnership_slug VARCHAR, dcn_account_locator_id VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-
   let snowflake_partner_account_locator_id VARCHAR := current_account();
   let snowflake_partner_username VARCHAR := current_user();
   let snowflake_partner_role VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_role';
@@ -272,6 +273,7 @@ BEGIN
   RETURN 'Partner ' || :partnership_slug || ' is successfully connected.';
 END;
 
+
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_run(partnership_slug VARCHAR, match_id VARCHAR, source_table VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
@@ -414,6 +416,7 @@ BEGIN
   RETURN 'A match attempt is successfully scheduled';
 END;
 
+
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_get_results(partnership_slug VARCHAR, match_id VARCHAR)
 RETURNS TABLE(match_id VARCHAR, match_run_id VARCHAR, match_result VARIANT, run_time TIMESTAMP_TZ, status VARCHAR)
 LANGUAGE SQL
@@ -453,6 +456,7 @@ BEGIN
   );
   return table(res);
 END;
+
 
 CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.cleanup_profiles(partnership_slug VARCHAR)
 RETURNS VARCHAR
@@ -497,6 +501,7 @@ BEGIN
   END IF;
 END;
 
+
 CREATE OR REPLACE PROCEDURE optable_partnership.public.version()
 RETURNS TABLE(version VARCHAR)
 LANGUAGE SQL
@@ -506,6 +511,7 @@ BEGIN
   let res RESULTSET := (SELECT version FROM optable_partnership.public.version);
   return table(res);
 END;
+
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_email(id VARCHAR)
 RETURNS VARCHAR
@@ -518,56 +524,72 @@ $$
       'e:'|| SHA2(TRIM(id), 256)
     ELSE 'e:' || id
   END
-$$;
+$$
+;
+
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_apple(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
   'a:' || id
-$$;
+$$
+;
+
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_google(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
   'g:' || id
-$$;
+$$
+;
+
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_ipv4(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
   'i4:' || id
-$$;
+$$
+;
+
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_ipv6(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
   'i6:' || id
-$$;
+$$
+;
+
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_samsung(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
   's:' || id
-$$;
+$$
+;
+
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_roku(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
   'r:' || id
-$$;
+$$
+;
+
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_amazon(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
   'f:' || id
-$$;
+$$
+;
+
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_phone(id VARCHAR)
 RETURNS VARCHAR
@@ -580,23 +602,27 @@ $$
       'p:'|| SHA2(TRIM(id), 256)
     ELSE 'p:' || id
   END
-$$;
+$$
+;
+
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_net_id(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
   'n:' || id
-$$;
+$$
+;
+
 
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_id(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
   CASE
-    WHEN CONTAINS(id, ':') THEN
+    WHEN STARTSWITH(id, 'e') OR STARTSWITH(id, 'a') OR STARTSWITH(id, 'g') OR STARTSWITH(id, 'i4') OR STARTSWITH(id, 'i6') OR STARTSWITH(id, 's') OR STARTSWITH(id, 'r') OR STARTSWITH(id, 'f') OR STARTSWITH(id, 'p') OR STARTSWITH(id, 'n') THEN
       CASE
-        WHEN CONTAINS(id, 'e') THEN
+        WHEN STARTSWITH(id, 'e:') THEN
           CASE
             WHEN LENGTH(REPLACE(id, 'e:', '')) <> 64 THEN
               'e:'|| SHA2(REPLACE(TRIM(id), 'e:', ''), 256)
@@ -604,7 +630,7 @@ $$
               'e:'|| SHA2(REPLACE(TRIM(id), 'e:', ''), 256)
             ELSE id
           END
-        WHEN CONTAINS(id, 'p') THEN
+        WHEN STARTSWITH(id, 'p:') THEN
           CASE
             WHEN LENGTH(REPLACE(id, 'p:', '')) <> 64 THEN
               'p:'|| SHA2(REPLACE(TRIM(id), 'p:', ''), 256)
@@ -621,7 +647,9 @@ $$
         ELSE 'p:'|| SHA2(TRIM(id), 256)
       END
   END
-$$;
+$$
+;
+
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_create(partnership_slug VARCHAR, match_name VARCHAR)
 RETURNS TABLE(match_id VARCHAR)
@@ -645,6 +673,7 @@ BEGIN
   return table(res);
 END;
 
+
 CREATE OR REPLACE PROCEDURE optable_partnership.public.match_list(partnership_slug VARCHAR)
 RETURNS TABLE(match_id VARCHAR, match_name VARCHAR)
 LANGUAGE SQL
@@ -665,16 +694,18 @@ BEGIN
   RETURN table(res);
 END;
 
+
 CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.show_columns(source_table VARCHAR)
 RETURNS TABLE(column_name VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-    SHOW COLUMNS IN identifier(:source_table);
-    let columns_res RESULTSET := (SELECT "column_name" from table(result_scan(last_query_id())));
-    return TABLE(columns_res);
+  SHOW COLUMNS IN identifier(:source_table);
+  let columns_res RESULTSET := (SELECT "column_name" from table(result_scan(last_query_id())));
+  return TABLE(columns_res);
 END;
+
 
 CREATE OR REPLACE PROCEDURE optable_partnership.public.grant_permission(partnership_slug VARCHAR, database_name VARCHAR, schema_name VARCHAR)
 RETURNS VARCHAR
