@@ -192,11 +192,13 @@ BEGIN
 
   DELETE FROM identifier(:snowflake_partner_dcr_shared_schema_query_templates);  -- Run this if you change any of the below queries
   INSERT INTO identifier(:snowflake_partner_dcr_shared_schema_query_templates)
-  VALUES ('match_attempt', $$SELECT dcn_partner.identifier AS id FROM @dcn_partner_source_source_schema_profiles dcn_partner
-  INNER JOIN @snowflake_partner_source_source_schema_profiles snowflake_partner
-  ON dcn_partner.identifier = snowflake_partner.identifier
-  WHERE snowflake_partner.match_id = '@match_id'
-  AND exists (SELECT table_name FROM @dcn_partner_source_information_schema_tables WHERE table_schema = 'SOURCE_SCHEMA' AND table_name = 'PROFILES' AND table_type = 'BASE TABLE');$$);
+  VALUES ('match_attempt', $$
+SELECT dcn_partner.identifier AS id FROM @dcn_partner_source_source_schema_profiles dcn_partner
+INNER JOIN @snowflake_partner_source_source_schema_profiles snowflake_partner
+ON dcn_partner.identifier = snowflake_partner.identifier
+WHERE snowflake_partner.match_id = '@match_id'
+AND exists (SELECT table_name FROM @dcn_partner_source_information_schema_tables WHERE table_schema = 'SOURCE_SCHEMA' AND table_name = 'PROFILES' AND table_type = 'BASE TABLE');
+  $$);
 
   -- Create request status table
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_match_requests)
@@ -271,6 +273,9 @@ BEGIN
   USE ROLE accountadmin;
 
   RETURN 'Partner ' || :partnership_slug || ' is successfully connected.';
+  EXCEPTION
+    WHEN OTHER THEN
+        RETURN 'An error occurred, please make sure that you have entered the correct Account Locator ID, and that you are authorized to call the partner_connect function. Actual error message: ' || sqlerrm;
 END;
 
 
@@ -308,6 +313,9 @@ BEGIN
   let target_table_name VARCHAR := REPLACE(dcn_partner_source_schema_profiles || '_' || :match_id, '-', '_');
   let request_id VARCHAR := uuid_string();
 
+  let double_run_exception EXCEPTION := EXCEPTION (-50001, 'You cannot schedule the same match more than once at a time. Match ' || :match_id || ' is already running');
+  let not_found_exception EXCEPTION := EXCEPTION (-50002, 'Match ' || :match_id || ' is not found');
+
   USE ROLE identifier(:snowflake_partner_role);
   USE WAREHOUSE optable_partnership_setup;
 
@@ -321,14 +329,14 @@ BEGIN
     match_is_missing := false;
   end for;
   IF (match_is_missing = TRUE) THEN
-    RETURN 'Match ' || :match_id || ' is not found';
+    RAISE not_found_exception;
   END IF;
 
 
   let matches_res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_source_schema_profiles) WHERE match_id ILIKE :match_id LIMIT 1);
   let c2 cursor for matches_res;
   for row_variable in c2 do
-    RETURN 'You cannot schedule the same match more than once at a time. Match ' || :match_id || ' is already running';
+    RAISE double_run_exception;
   end for;
 
   BEGIN TRANSACTION;
