@@ -50,13 +50,9 @@ $$
       sql.execute();
     }
   } catch (err) {
-    var result =  "Failed: Code: " + err.code + "
-  State: " + err.state;
-    result += "
-  Message: " + err.message;
-    result += "
-Stack Trace:
-" + err.stackTraceTxt;
+    var result =  "Failed: Code: " + err.code + "\n  State: " + err.state;
+    result += "\n  Message: " + err.message;
+    result += "\nStack Trace:\n" + err.stackTraceTxt;
     return result;
   }
   return 'Partner ' + CURRENT_PARTNERSHIP_SLUG + ' is disconnected';
@@ -102,13 +98,9 @@ $$
     }
     return "RAP created";
   } catch (err) {
-    var result =  "Failed: Code: " + err.code + "
-  State: " + err.state;
-    result += "
-  Message: " + err.message;
-    result += "
-Stack Trace:
-" + err.stackTraceTxt;
+    var result =  "Failed: Code: " + err.code + "\n  State: " + err.state;
+    result += "\n  Message: " + err.message;
+    result += "\nStack Trace:\n" + err.stackTraceTxt;
     return result;
   }
 $$
