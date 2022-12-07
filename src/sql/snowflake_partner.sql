@@ -157,7 +157,6 @@ BEGIN
   GRANT ALL privileges ON ALL PROCEDURES IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
   GRANT ALL privileges ON ALL FUNCTIONS IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
   GRANT SELECT ON ALL TABLES IN DATABASE optable_partnership TO ROLE identifier(:snowflake_partner_role);
-  GRANT EXECUTE TASK, EXECUTE MANAGED TASK ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
   GRANT ALL privileges ON FUTURE PROCEDURES IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
   GRANT ALL privileges ON FUTURE FUNCTIONS IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
   GRANT SELECT ON FUTURE TABLES IN DATABASE optable_partnership TO ROLE identifier(:snowflake_partner_role);
@@ -302,7 +301,6 @@ BEGIN
   let snowflake_partner_dcr_shared_schema_query_templates VARCHAR := :snowflake_partner_dcr_shared_schema || '.query_templates';
   let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
   let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
-  let snowflake_partner_dcr_internal_schema_cleaner VARCHAR := :snowflake_partner_dcr_internal_schema || '.cleaner_task';
   let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_source_db';
   let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
   let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
@@ -322,6 +320,8 @@ BEGIN
   -- Make sure we have access to the source table:
   SELECT COUNT(*) FROM identifier(:source_table);
 
+  call optable_partnership.public.cleanup_profiles(:partnership_slug);
+
   let matches_id_res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id LIMIT 1);
   let match_c1 cursor for matches_id_res;
   let match_is_missing BOOLEAN := true;
@@ -331,7 +331,6 @@ BEGIN
   IF (match_is_missing = TRUE) THEN
     RAISE not_found_exception;
   END IF;
-
 
   let matches_res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_source_schema_profiles) WHERE match_id ILIKE :match_id LIMIT 1);
   let c2 cursor for matches_res;
@@ -405,22 +404,6 @@ BEGIN
   INSERT INTO identifier(:snowflake_partner_dcr_internal_schema_match_attempts) SELECT :request_id, :match_id, '', parse_json('{}'), :attempt_ts, 'establishing connection';
   COMMIT;
 
-  let tasks_stmts ARRAY := [
-    -- create cleaner task
-    'CREATE OR REPLACE TASK ' || :snowflake_partner_dcr_internal_schema_cleaner || ' ' ||
-      'SCHEDULE = \'USING CRON * * * * * UTC\' ' ||
-      'ALLOW_OVERLAPPING_EXECUTION = FALSE ' ||
-    'AS ' ||
-    'call optable_partnership.internal_schema.cleanup_profiles(\'' || :partnership_slug || '\')'
-  ];
-
-   FOR i IN 1 TO array_size(:tasks_stmts) DO
-     EXECUTE IMMEDIATE replace(:tasks_stmts[i-1], '"', '');
-   END FOR;
-
-  -- Start the task to cleanup profiles
-  ALTER TASK identifier(:snowflake_partner_dcr_internal_schema_cleaner) RESUME;
-
   RETURN 'A match attempt is successfully scheduled';
 END;
 
@@ -466,7 +449,7 @@ BEGIN
 END;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.cleanup_profiles(partnership_slug VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership.public.cleanup_profiles(partnership_slug VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
@@ -482,31 +465,16 @@ BEGIN
   let snowflake_partner_account_locator_id VARCHAR := current_account();
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
-  let snowflake_partner_dcr_internal_schema VARCHAR := :snowflake_partner_dcr_db || '.internal_schema';
-  let snowflake_partner_dcr_shared_internal_cleaner VARCHAR := :snowflake_partner_dcr_internal_schema || '.cleaner_task';
   let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let dcn_partner_dcr_shared_schema_match_attempts VARCHAR := :dcn_partner_dcr_db || '.shared_schema.match_attempts';
   let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_source_db';
   let snowflake_partner_source_schema VARCHAR := :snowflake_partner_source_db || '.source_schema';
   let snowflake_partner_source_schema_profiles VARCHAR := :snowflake_partner_source_schema || '.profiles';
-  let snowflake_partner_dcr_internal_schema_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.match_attempts';
-  let snowflake_partner_dcr_internal_schema_pending_match_attempts VARCHAR := :snowflake_partner_dcr_internal_schema || '.pending_match_attempts';
-  let snowflake_partner_dcr_internal_schema_cleaner VARCHAR := :snowflake_partner_dcr_internal_schema || '.cleaner_task';
 
   DELETE FROM identifier(:snowflake_partner_source_schema_profiles) WHERE LOWER(request_id) IN (
     SELECT LOWER(request_id) FROM identifier(:dcn_partner_dcr_shared_schema_match_attempts) WHERE status IN ('errored', 'completed')
   );
 
-  let current_requests_res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_source_schema_profiles) LIMIT 1);
-  let c3 cursor for current_requests_res;
-  let no_more_matches BOOLEAN := TRUE;
-  for row_variable in c3 do
-    no_more_matches := FALSE;
-  end for;
-
-  IF (no_more_matches) then
-    DROP TASK identifier(:snowflake_partner_dcr_internal_schema_cleaner);
-  END IF;
 END;
 
 
