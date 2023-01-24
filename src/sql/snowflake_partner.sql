@@ -495,7 +495,7 @@ LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  RETURN 'Visit our documentation guide: https://docs.optable.co/optable-documentation/guides/snowflake-partner-utility';
+  RETURN 'Visit our (TEST) documentation guide: https://docs.optable.co/optable-documentation/guides/snowflake-partner-utility';
 END;
 
 
