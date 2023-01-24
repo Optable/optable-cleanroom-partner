@@ -489,6 +489,16 @@ BEGIN
 END;
 
 
+CREATE OR REPLACE PROCEDURE optable_partnership.public.help()
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  RETURN 'Visit our documentation guide: https://docs.optable.co/optable-documentation/guides/snowflake-partner-utility';
+END;
+
+
 CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_email(id VARCHAR)
 RETURNS VARCHAR
 AS
