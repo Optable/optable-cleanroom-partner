@@ -1,15 +1,15 @@
 USE ROLE accountadmin;
-CREATE DATABASE IF NOT EXISTS optable_partnership;
-CREATE SCHEMA IF NOT EXISTS optable_partnership.public;
-CREATE SCHEMA IF NOT EXISTS optable_partnership.internal_schema;
-CREATE OR REPLACE WAREHOUSE optable_partnership_setup warehouse_size=xsmall;
-USE WAREHOUSE optable_partnership_setup;
-CREATE TABLE IF NOT EXISTS optable_partnership.public.dcn_partners(org VARCHAR NOT NULL, partnership_slug VARCHAR NOT NULL, dcn_account_locator_id VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL);
-CREATE TABLE IF NOT EXISTS optable_partnership.public.version(version VARCHAR NOT NULL);
-DELETE FROM optable_partnership.public.version;
-INSERT INTO optable_partnership.public.version VALUES ('v0.0.1');
+CREATE DATABASE IF NOT EXISTS optable_partnership_v1;
+CREATE SCHEMA IF NOT EXISTS optable_partnership_v1.public;
+CREATE SCHEMA IF NOT EXISTS optable_partnership_v1.internal_schema;
+CREATE OR REPLACE WAREHOUSE optable_partnership_v1_setup warehouse_size=xsmall AUTO_SUSPEND=60;
+USE WAREHOUSE optable_partnership_v1_setup;
+CREATE TABLE IF NOT EXISTS optable_partnership_v1.public.dcn_partners(org VARCHAR NOT NULL, partnership_slug VARCHAR NOT NULL, dcn_account_locator_id VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL);
+CREATE TABLE IF NOT EXISTS optable_partnership_v1.public.version(version VARCHAR NOT NULL);
+DELETE FROM optable_partnership_v1.public.version;
+INSERT INTO optable_partnership_v1.public.version VALUES ('v1.0');
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_disconnect(current_partnership_slug VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.partner_disconnect(current_partnership_slug VARCHAR)
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
 EXECUTE AS CALLER
@@ -21,7 +21,7 @@ $$
   current_account_result.next();
   var snowflake_account_locator_id = current_account_result.getColumnValue(1);
 
-  var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE '" + CURRENT_PARTNERSHIP_SLUG + "' LIMIT 1"} );
+  var dcn_account_stmt = snowflake.createStatement( {sqlText: "SELECT dcn_account_locator_id FROM optable_partnership_v1.public.dcn_partners WHERE partnership_slug ILIKE '" + CURRENT_PARTNERSHIP_SLUG + "' LIMIT 1"} );
   var dcn_account_result = dcn_account_stmt.execute();
   dcn_account_result.next();
   var dcn_account_locator_id = dcn_account_result.getColumnValue(1);
@@ -42,7 +42,7 @@ $$
     "DROP DATABASE IF EXISTS " + snowflake_partner_dcr_db,
     "DROP ROLE IF EXISTS " + snowflake_partner_role,
     "DROP DATABASE IF EXISTS " + dcn_partner_dcr_db,
-    "DELETE FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE '" + CURRENT_PARTNERSHIP_SLUG + "'"
+    "DELETE FROM optable_partnership_v1.public.dcn_partners WHERE partnership_slug ILIKE '" + CURRENT_PARTNERSHIP_SLUG + "'"
   ];
   try {
     for (const stmt of statements) {
@@ -60,7 +60,7 @@ $$
 ;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_list()
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.partner_list()
 RETURNS TABLE(organization_name VARCHAR, partnership_slug VARCHAR, dcn_account_locator_id VARCHAR, snowflake_partner_role VARCHAR, status VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
@@ -68,18 +68,59 @@ AS
 $$
 DECLARE
     QUERY STRING;
-    res resultset;
+    final_res resultset;
 BEGIN
-   -- TODO: change the hardcoded connected to actual partnership status
-   QUERY := 'SELECT *, \'connected\' FROM optable_partnership.public.dcn_partners';
-   res := (EXECUTE IMMEDIATE :QUERY);
-   return table(res);
+   let snowflake_account_locator_id VARCHAR := current_account();
+   query := 'SELECT * FROM optable_partnership_v1.public.dcn_partners';
+   let res RESULTSET := (EXECUTE IMMEDIATE :query);
+   let c1 cursor for res;
+   let final_stmt VARCHAR := '';
+   let first_row BOOLEAN := TRUE;
+   for row_variable in c1 do
+     let dcn_account_locator_id VARCHAR := row_variable.dcn_account_locator_id;
+     let partnership_slug VARCHAR := row_variable.partnership_slug;
+     let status VARCHAR := 'dummy';
+     let status_res RESULTSET := (call optable_partnership_v1.internal_schema.is_connected(:partnership_slug, :snowflake_account_locator_id, :dcn_account_locator_id));
+     let c2 cursor for status_res;
+     for rv in c2 do
+        status := rv.is_connected;
+     end for;
+     let partner_role VARCHAR := row_variable.snowflake_partner_role;
+     let org VARCHAR := row_variable.org;
+     let selects VARCHAR := 'SELECT \'' || :org || '\' AS organization_name, \'' || :partnership_slug || '\' AS partnership_slug, \'' ||
+        :dcn_account_locator_id || '\' AS dcn_account_locator_id, \'' || :partner_role || '\' AS snowflake_partner_role, \'' || :status || '\' AS status';
+   IF (first_row = TRUE) then
+     final_stmt := :selects;
+   else
+     final_stmt := :final_stmt || ' UNION ALL ' || :selects;
+   end if;
+     first_row := FALSE;
+   end for;
+   final_res := (EXECUTE IMMEDIATE :final_stmt);
+   RETURN table(final_res);
 END;
 $$
 ;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.create_rap(snowflake_partner_role VARCHAR, dcr_rap VARCHAR, match_requests VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.internal_schema.is_connected(partnership_slug VARCHAR, snowflake_account_locator_id VARCHAR, dcn_account_locator_id VARCHAR)
+RETURNS VARCHAR
+EXECUTE AS CALLER
+AS
+$$
+BEGIN
+  let tbl VARCHAR := 'dcn_partner_' || partnership_slug || '_' || snowflake_account_locator_id || '_' || dcn_account_locator_id || '_dcr_db.shared_schema.match_attempts';
+  SELECT * FROM identifier(:tbl);
+  RETURN 'connected';
+  EXCEPTION
+    WHEN OTHER THEN
+      RETURN 'disconnected';
+END;
+$$
+;
+
+
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.internal_schema.create_rap(snowflake_partner_role VARCHAR, dcr_rap VARCHAR, match_requests VARCHAR)
 RETURNS VARCHAR
 LANGUAGE JAVASCRIPT
 EXECUTE AS CALLER
@@ -107,14 +148,14 @@ $$
 ;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.partner_connect(org VARCHAR, partnership_slug VARCHAR, dcn_account_locator_id VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.partner_connect(org VARCHAR, partnership_slug VARCHAR, dcn_account_locator_id VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
   let snowflake_partner_account_locator_id VARCHAR := current_account();
-  let snowflake_partner_username VARCHAR := current_user();
+  let snowflake_partner_username VARCHAR := '"' || current_user() || '"';
   let snowflake_partner_role VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_role';
   let snowflake_partner_warehouse VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_warehouse';
   let snowflake_partner_source_db VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_source_db';
@@ -136,8 +177,8 @@ BEGIN
 
   -- Create roles
 
-  DELETE FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug;
-  INSERT INTO optable_partnership.public.dcn_partners (org, partnership_slug, dcn_account_locator_id, snowflake_partner_role) VALUES (:org, :partnership_slug, :dcn_account_locator_id, :snowflake_partner_role);
+  DELETE FROM optable_partnership_v1.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug;
+  INSERT INTO optable_partnership_v1.public.dcn_partners (org, partnership_slug, dcn_account_locator_id, snowflake_partner_role) VALUES (:org, :partnership_slug, :dcn_account_locator_id, :snowflake_partner_role);
 
   USE ROLE securityadmin;
   CREATE OR REPLACE ROLE identifier(:snowflake_partner_role);
@@ -150,16 +191,16 @@ BEGIN
   GRANT CREATE SHARE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
   GRANT IMPORT SHARE ON ACCOUNT TO ROLE identifier(:snowflake_partner_role);
 
-  GRANT USAGE ON DATABASE optable_partnership TO ROLE identifier(:snowflake_partner_role);
-  GRANT USAGE ON WAREHOUSE optable_partnership_setup TO ROLE identifier(:snowflake_partner_role);
-  GRANT USAGE ON SCHEMA optable_partnership.public TO ROLE identifier(:snowflake_partner_role);
-  GRANT USAGE ON SCHEMA optable_partnership.internal_schema TO ROLE identifier(:snowflake_partner_role);
-  GRANT ALL privileges ON ALL PROCEDURES IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
-  GRANT ALL privileges ON ALL FUNCTIONS IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
-  GRANT SELECT ON ALL TABLES IN DATABASE optable_partnership TO ROLE identifier(:snowflake_partner_role);
-  GRANT ALL privileges ON FUTURE PROCEDURES IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
-  GRANT ALL privileges ON FUTURE FUNCTIONS IN DATABASE optable_partnership TO identifier(:snowflake_partner_role);
-  GRANT SELECT ON FUTURE TABLES IN DATABASE optable_partnership TO ROLE identifier(:snowflake_partner_role);
+  GRANT USAGE ON DATABASE optable_partnership_v1 TO ROLE identifier(:snowflake_partner_role);
+  GRANT USAGE ON WAREHOUSE optable_partnership_v1_setup TO ROLE identifier(:snowflake_partner_role);
+  GRANT USAGE ON SCHEMA optable_partnership_v1.public TO ROLE identifier(:snowflake_partner_role);
+  GRANT USAGE ON SCHEMA optable_partnership_v1.internal_schema TO ROLE identifier(:snowflake_partner_role);
+  GRANT ALL privileges ON ALL PROCEDURES IN DATABASE optable_partnership_v1 TO identifier(:snowflake_partner_role);
+  GRANT ALL privileges ON ALL FUNCTIONS IN DATABASE optable_partnership_v1 TO identifier(:snowflake_partner_role);
+  GRANT SELECT ON ALL TABLES IN DATABASE optable_partnership_v1 TO ROLE identifier(:snowflake_partner_role);
+  GRANT ALL privileges ON FUTURE PROCEDURES IN DATABASE optable_partnership_v1 TO identifier(:snowflake_partner_role);
+  GRANT ALL privileges ON FUTURE FUNCTIONS IN DATABASE optable_partnership_v1 TO identifier(:snowflake_partner_role);
+  GRANT SELECT ON FUTURE TABLES IN DATABASE optable_partnership_v1 TO ROLE identifier(:snowflake_partner_role);
 
   -- Create virtual warehouse
   USE ROLE identifier(:snowflake_partner_role);
@@ -210,16 +251,16 @@ AND exists (SELECT table_name FROM @dcn_partner_source_information_schema_tables
     query_text VARCHAR,
     at_timestamp TIMESTAMP_TZ,
     at_timestamp_text VARCHAR
-  );
-
-  -- Create clean room internal schema and objects
-  CREATE OR REPLACE SCHEMA identifier(:snowflake_partner_dcr_internal_schema);
+  ) change_tracking = true;
 
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_shared_schema_matches)
   (
     match_id VARCHAR,
     match_name VARCHAR
-  );
+  ) change_tracking = true;
+
+  -- Create clean room internal schema and objects
+  CREATE OR REPLACE SCHEMA identifier(:snowflake_partner_dcr_internal_schema);
 
   CREATE OR REPLACE TABLE identifier(:snowflake_partner_dcr_internal_schema_match_attempts)
   (
@@ -232,7 +273,7 @@ AND exists (SELECT table_name FROM @dcn_partner_source_information_schema_tables
   );
 
   -- Create and apply row access policy to profiles source table
-  call optable_partnership.internal_schema.create_rap(:snowflake_partner_role, :snowflake_partner_source_schema_dcr_rap, :snowflake_partner_dcr_shared_schema_match_requests);
+  call optable_partnership_v1.internal_schema.create_rap(:snowflake_partner_role, :snowflake_partner_source_schema_dcr_rap, :snowflake_partner_dcr_shared_schema_match_requests);
 
   USE ROLE identifier(:snowflake_partner_role);
   ALTER TABLE identifier(:snowflake_partner_source_schema_profiles) add row access policy identifier(:snowflake_partner_source_schema_dcr_rap) on (identifier, match_id);
@@ -278,20 +319,30 @@ AND exists (SELECT table_name FROM @dcn_partner_source_information_schema_tables
 END;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.match_run(partnership_slug VARCHAR, match_id VARCHAR, source_table VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.match_run(partnership_slug VARCHAR, match_id VARCHAR, source_table VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
+  let snowflake_partner_account_locator_id VARCHAR := current_account();
+
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership_v1.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
   let c1 cursor for account_res;
   let dcn_account_locator_id VARCHAR := 'dummy';
   for row_variable in c1 do
     dcn_account_locator_id := row_variable.dcn_account_locator_id;
   end for;
 
-  let snowflake_partner_account_locator_id VARCHAR := current_account();
+  let partner_status_res RESULTSET := (call optable_partnership_v1.internal_schema.is_connected(:partnership_slug, :snowflake_partner_account_locator_id, :dcn_account_locator_id));
+  let partner_status_cursor cursor for partner_status_res;
+  for rv in partner_status_cursor do
+    IF (rv.is_connected = 'disconnected') THEN
+      let disconnected_exception EXCEPTION := EXCEPTION (-50008, 'Partner ' || :partnership_slug || ' is no longer connected');
+      RAISE disconnected_exception;
+    END IF;
+  end for;
+
   let snowflake_partner_role VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_role';
   let snowflake_partner_warehouse VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_warehouse';
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
@@ -315,12 +366,12 @@ BEGIN
   let not_found_exception EXCEPTION := EXCEPTION (-50002, 'Match ' || :match_id || ' is not found');
 
   USE ROLE identifier(:snowflake_partner_role);
-  USE WAREHOUSE optable_partnership_setup;
+  USE WAREHOUSE optable_partnership_v1_setup;
 
   -- Make sure we have access to the source table:
   SELECT COUNT(*) FROM identifier(:source_table);
 
-  call optable_partnership.public.cleanup_profiles(:partnership_slug);
+  call optable_partnership_v1.public.cleanup_profiles(:partnership_slug);
 
   let matches_id_res RESULTSET := (SELECT * FROM identifier(:snowflake_partner_dcr_shared_schema_matches) WHERE match_id ILIKE :match_id LIMIT 1);
   let match_c1 cursor for matches_id_res;
@@ -339,37 +390,37 @@ BEGIN
   end for;
 
   BEGIN TRANSACTION;
-  let columns_res RESULTSET := (call optable_partnership.internal_schema.show_columns(:source_table));
+  let columns_res RESULTSET := (call optable_partnership_v1.internal_schema.show_columns(:source_table));
   let c3 cursor for columns_res;
   for r in c3 do
     let cn VARCHAR := r.column_name;
     IF (cn ILIKE 'id_e%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_email(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_email(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id_p%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_phone(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_phone(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id_i4%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_ipv4(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_ipv4(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id_i6%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_ipv6(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_ipv6(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id_a%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_apple(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_apple(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id_g%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_google(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_google(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id_r%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_roku(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_roku(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id_s%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_samsung(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_samsung(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id_f%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_amazon(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_amazon(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id_n%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_net_id(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_net_id(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership.internal_schema.parse_id(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
+      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_id(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     END IF;
   end for;
   ALTER SESSION SET timezone = 'UTC';
 
-  let version_res RESULTSET := (SELECT version FROM optable_partnership.public.version);
+  let version_res RESULTSET := (SELECT version FROM optable_partnership_v1.public.version);
   let c4 cursor for version_res;
   let version VARCHAR := 'dummy';
   for r in c4 do
@@ -408,14 +459,14 @@ BEGIN
 END;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.match_get_results(partnership_slug VARCHAR, match_id VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.match_get_results(partnership_slug VARCHAR, match_id VARCHAR)
 RETURNS TABLE(match_id VARCHAR, match_run_id VARCHAR, match_result VARIANT, run_time TIMESTAMP_TZ, status VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
   let snowflake_partner_account_locator_id VARCHAR := current_account();
-  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership_v1.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
   let c1 cursor for account_res;
   let dcn_account_locator_id VARCHAR := '';
   for row_variable in c1 do
@@ -449,13 +500,13 @@ BEGIN
 END;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.cleanup_profiles(partnership_slug VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.cleanup_profiles(partnership_slug VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership_v1.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
   let c1 cursor for account_res;
   let dcn_account_locator_id VARCHAR := 'dummy';
   for row_variable in c1 do
@@ -478,18 +529,18 @@ BEGIN
 END;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.version()
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.version()
 RETURNS TABLE(version VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let res RESULTSET := (SELECT version FROM optable_partnership.public.version);
+  let res RESULTSET := (SELECT version FROM optable_partnership_v1.public.version);
   return table(res);
 END;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.help()
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.help()
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
@@ -499,7 +550,7 @@ BEGIN
 END;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_email(id VARCHAR)
+CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_email(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
@@ -514,7 +565,7 @@ $$
 ;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_apple(id VARCHAR)
+CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_apple(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
@@ -523,7 +574,7 @@ $$
 ;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_google(id VARCHAR)
+CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_google(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
@@ -532,7 +583,7 @@ $$
 ;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_ipv4(id VARCHAR)
+CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_ipv4(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
@@ -541,7 +592,7 @@ $$
 ;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_ipv6(id VARCHAR)
+CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_ipv6(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
@@ -550,7 +601,7 @@ $$
 ;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_samsung(id VARCHAR)
+CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_samsung(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
@@ -559,7 +610,7 @@ $$
 ;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_roku(id VARCHAR)
+CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_roku(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
@@ -568,7 +619,7 @@ $$
 ;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_amazon(id VARCHAR)
+CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_amazon(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
@@ -577,7 +628,7 @@ $$
 ;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_phone(id VARCHAR)
+CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_phone(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
@@ -592,7 +643,7 @@ $$
 ;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_net_id(id VARCHAR)
+CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_net_id(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
@@ -601,7 +652,7 @@ $$
 ;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership.internal_schema.parse_id(id VARCHAR)
+CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_id(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
@@ -637,19 +688,29 @@ $$
 ;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.match_create(partnership_slug VARCHAR, match_name VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.match_create(partnership_slug VARCHAR, match_name VARCHAR)
 RETURNS TABLE(match_id VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
   let snowflake_partner_account_locator_id VARCHAR := current_account();
-  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership_v1.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
   let c1 cursor for account_res;
   let dcn_account_locator_id VARCHAR := 'dummy';
   for row_variable in c1 do
     dcn_account_locator_id := row_variable.dcn_account_locator_id;
   end for;
+
+  let partner_status_res RESULTSET := (call optable_partnership_v1.internal_schema.is_connected(:partnership_slug, :snowflake_partner_account_locator_id, :dcn_account_locator_id));
+  let partner_status_cursor cursor for partner_status_res;
+  for rv in partner_status_cursor do
+  IF (rv.is_connected = 'disconnected') THEN
+    let disconnected_exception EXCEPTION := EXCEPTION (-50008, 'Partner ' || :partnership_slug || ' is no longer connected');
+    RAISE disconnected_exception;
+  END IF;
+  end for;
+
   let snowflake_partner_dcr_db VARCHAR := 'snowflake_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let snowflake_partner_dcr_shared_schema VARCHAR := :snowflake_partner_dcr_db || '.shared_schema';
   let snowflake_partner_dcr_shared_schema_matches VARCHAR := :snowflake_partner_dcr_shared_schema || '.matches';
@@ -660,14 +721,14 @@ BEGIN
 END;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.match_list(partnership_slug VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.match_list(partnership_slug VARCHAR)
 RETURNS TABLE(match_id VARCHAR, match_name VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
   let snowflake_partner_account_locator_id VARCHAR := current_account();
-  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership_v1.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
   let c1 cursor for account_res;
   let dcn_account_locator_id VARCHAR := 'dummy';
   for row_variable in c1 do
@@ -681,7 +742,7 @@ BEGIN
 END;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.internal_schema.show_columns(source_table VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.internal_schema.show_columns(source_table VARCHAR)
 RETURNS TABLE(column_name VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
@@ -693,13 +754,13 @@ BEGIN
 END;
 
 
-CREATE OR REPLACE PROCEDURE optable_partnership.public.grant_permission(partnership_slug VARCHAR, database_name VARCHAR, schema_name VARCHAR)
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.grant_permission(partnership_slug VARCHAR, database_name VARCHAR, schema_name VARCHAR)
 RETURNS VARCHAR
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
 BEGIN
-  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
+  let account_res RESULTSET := (SELECT dcn_account_locator_id FROM optable_partnership_v1.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug LIMIT 1);
   let c1 cursor for account_res;
   let dcn_account_locator_id VARCHAR := 'dummy';
   for row_variable in c1 do
