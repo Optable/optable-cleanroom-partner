@@ -291,8 +291,10 @@ AND exists (SELECT table_name FROM @dcn_partner_source_information_schema_tables
 
     -- Grant object privileges to source share
     'GRANT USAGE ON DATABASE ' || :snowflake_partner_source_db || ' TO SHARE ' || :snowflake_partner_source_share,
+    'GRANT REFERENCE_USAGE ON DATABASE ' || :snowflake_partner_dcr_db || ' TO SHARE ' || :snowflake_partner_source_share,
     'GRANT USAGE ON SCHEMA ' || :snowflake_partner_source_schema || ' TO SHARE ' || :snowflake_partner_source_share,
     'GRANT SELECT ON TABLE ' || :snowflake_partner_source_schema_profiles || ' TO SHARE ' ||  :snowflake_partner_source_share,
+
 
     -- Add account to shares
     -- Note use of SHARE_RESTRICTIONS clause to enable sharing between Business Critical and Enterprise account deployments
