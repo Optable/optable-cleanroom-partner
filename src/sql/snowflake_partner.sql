@@ -71,10 +71,10 @@ DECLARE
     final_res resultset;
 BEGIN
    let snowflake_account_locator_id VARCHAR := current_account();
-   query := 'SELECT * FROM optable_partnership_v1.public.dcn_partners';
+   query := 'SELECT *, \'\' AS status FROM optable_partnership_v1.public.dcn_partners';
    let res RESULTSET := (EXECUTE IMMEDIATE :query);
    let c1 cursor for res;
-   let final_stmt VARCHAR := '';
+   let final_stmt VARCHAR := :query || ' WHERE 1 <> 1'; -- To make sure that there is a query to run in case no partners exist
    let first_row BOOLEAN := TRUE;
    for row_variable in c1 do
      let dcn_account_locator_id VARCHAR := row_variable.dcn_account_locator_id;
@@ -102,6 +102,33 @@ END;
 $$
 ;
 
+
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.internal_schema.drop_disconnected_partners()
+RETURNS VARCHAR
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+$$
+  BEGIN
+  let res RESULTSET := (call optable_partnership_v1.public.partner_list());
+  let c1 cursor for res;
+  for row_variable in c1 do
+    let status VARCHAR := row_variable.status;
+    if (status = 'disconnected') THEN
+      let slug VARCHAR := row_variable.partnership_slug;
+      call optable_partnership_v1.public.partner_disconnect(:slug);
+    END IF;
+  end for;
+  END;
+  $$
+  ;
+
+CREATE OR REPLACE TASK optable_partnership_v1.internal_schema.partnership_cleanup_task
+  SCHEDULE = 'USING CRON 0 1 * * * UTC'
+  AS
+    call optable_partnership_v1.internal_schema.drop_disconnected_partners();
+
+ALTER TASK optable_partnership_v1.internal_schema.partnership_cleanup_task RESUME;
 
 CREATE OR REPLACE PROCEDURE optable_partnership_v1.internal_schema.is_connected(partnership_slug VARCHAR, snowflake_account_locator_id VARCHAR, dcn_account_locator_id VARCHAR)
 RETURNS VARCHAR
@@ -774,6 +801,7 @@ BEGIN
   let role_name VARCHAR := 'snowflake_partner_' || partnership_slug || '_' || snowflake_partner_account_locator_id || '_' || dcn_account_locator_id || '_role';
   let schema_name_full VARCHAR := :database_name || '.' || :schema_name;
   GRANT SELECT ON ALL TABLES IN DATABASE identifier(:database_name) TO ROLE identifier(:role_name);
+  GRANT SELECT ON FUTURE TABLES IN DATABASE identifier(:database_name) TO ROLE identifier(:role_name);
   GRANT USAGE ON DATABASE identifier(:database_name) TO ROLE identifier(:role_name);
   GRANT USAGE ON SCHEMA identifier(:schema_name_full) TO ROLE identifier(:role_name);
   RETURN 'permissions granted';
