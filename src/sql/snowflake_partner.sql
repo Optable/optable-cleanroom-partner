@@ -4,7 +4,7 @@ CREATE SCHEMA IF NOT EXISTS optable_partnership_v1.public;
 CREATE SCHEMA IF NOT EXISTS optable_partnership_v1.internal_schema;
 CREATE OR REPLACE WAREHOUSE optable_partnership_v1_setup warehouse_size=xsmall AUTO_SUSPEND=60;
 USE WAREHOUSE optable_partnership_v1_setup;
-CREATE TABLE IF NOT EXISTS optable_partnership_v1.public.dcn_partners(org VARCHAR NOT NULL, partnership_slug VARCHAR NOT NULL, dcn_account_locator_id VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL);
+CREATE TABLE IF NOT EXISTS optable_partnership_v1.public.dcn_partners(org VARCHAR NOT NULL, partnership_slug VARCHAR NOT NULL, dcn_account_locator_id VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL, revision VARCHAR NOT NULL);
 CREATE TABLE IF NOT EXISTS optable_partnership_v1.public.version(version VARCHAR NOT NULL);
 DELETE FROM optable_partnership_v1.public.version;
 INSERT INTO optable_partnership_v1.public.version VALUES ('v1.0');
@@ -61,7 +61,7 @@ $$
 
 
 CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.partner_list()
-RETURNS TABLE(organization_name VARCHAR, partnership_slug VARCHAR, dcn_account_locator_id VARCHAR, snowflake_partner_role VARCHAR, status VARCHAR)
+RETURNS TABLE(organization_name VARCHAR, partnership_slug VARCHAR, dcn_account_locator_id VARCHAR, snowflake_partner_role VARCHAR, revision VARCHAR, status VARCHAR)
 LANGUAGE SQL
 EXECUTE AS CALLER
 AS
@@ -87,8 +87,9 @@ BEGIN
      end for;
      let partner_role VARCHAR := row_variable.snowflake_partner_role;
      let org VARCHAR := row_variable.org;
+     let revision VARCHAR := row_variable.revision;
      let selects VARCHAR := 'SELECT \'' || :org || '\' AS organization_name, \'' || :partnership_slug || '\' AS partnership_slug, \'' ||
-        :dcn_account_locator_id || '\' AS dcn_account_locator_id, \'' || :partner_role || '\' AS snowflake_partner_role, \'' || :status || '\' AS status';
+        :dcn_account_locator_id || '\' AS dcn_account_locator_id, \'' || :partner_role || '\' AS snowflake_partner_role, \'' || :revision || '\' AS revision, \'' || :status || '\' AS status';
    IF (first_row = TRUE) then
      final_stmt := :selects;
    else
@@ -136,9 +137,31 @@ EXECUTE AS CALLER
 AS
 $$
 BEGIN
-  let tbl VARCHAR := 'dcn_partner_' || partnership_slug || '_' || snowflake_account_locator_id || '_' || dcn_account_locator_id || '_dcr_db.shared_schema.match_attempts';
+  let tbl VARCHAR := 'dcn_partner_' || partnership_slug || '_' || snowflake_account_locator_id || '_' || dcn_account_locator_id || '_dcr_db.shared_schema.connected_signal';
   SELECT * FROM identifier(:tbl);
   RETURN 'connected';
+  EXCEPTION
+    WHEN OTHER THEN
+      let status_res RESULTSET := (call optable_partnership_v1.internal_schema.is_connecting(:partnership_slug, :snowflake_account_locator_id, :dcn_account_locator_id));
+      let c cursor for status_res;
+      for rv in c do
+        RETURN rv.is_connecting;
+      end for;
+      RETURN 'disconnected';
+END;
+$$
+;
+
+
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.internal_schema.is_connecting(partnership_slug VARCHAR, snowflake_account_locator_id VARCHAR, dcn_account_locator_id VARCHAR)
+RETURNS VARCHAR
+EXECUTE AS CALLER
+AS
+$$
+BEGIN
+  let tbl VARCHAR := 'dcn_partner_' || partnership_slug || '_' || snowflake_account_locator_id || '_' || dcn_account_locator_id || '_dcr_db.shared_schema.match_attempts';
+  SELECT * FROM identifier(:tbl);
+  RETURN 'connecting';
   EXCEPTION
     WHEN OTHER THEN
       RETURN 'disconnected';
@@ -202,10 +225,18 @@ BEGIN
   let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let dcn_partner_dcr_shared_schema_match_attempts VARCHAR := :dcn_partner_dcr_db || '.shared_schema.match_attempts';
 
+  let partner_status_res RESULTSET := (call optable_partnership_v1.internal_schema.is_connected(:partnership_slug, :snowflake_partner_account_locator_id, :dcn_account_locator_id));
+  let partner_status_cursor cursor for partner_status_res;
+  for rv in partner_status_cursor do
+    IF (rv.is_connected = 'connected' OR rv.is_connected = 'connecting') THEN
+      RETURN 'Partner ' || :partnership_slug || ' is already connected, you cannot reconnect';
+    END IF;
+  end for;
+
   -- Create roles
 
   DELETE FROM optable_partnership_v1.public.dcn_partners WHERE partnership_slug ILIKE :partnership_slug;
-  INSERT INTO optable_partnership_v1.public.dcn_partners (org, partnership_slug, dcn_account_locator_id, snowflake_partner_role) VALUES (:org, :partnership_slug, :dcn_account_locator_id, :snowflake_partner_role);
+  INSERT INTO optable_partnership_v1.public.dcn_partners (org, partnership_slug, dcn_account_locator_id, snowflake_partner_role, revision) VALUES (:org, :partnership_slug, :dcn_account_locator_id, :snowflake_partner_role, '1');
 
   USE ROLE securityadmin;
   CREATE OR REPLACE ROLE identifier(:snowflake_partner_role);
@@ -366,7 +397,7 @@ BEGIN
   let partner_status_res RESULTSET := (call optable_partnership_v1.internal_schema.is_connected(:partnership_slug, :snowflake_partner_account_locator_id, :dcn_account_locator_id));
   let partner_status_cursor cursor for partner_status_res;
   for rv in partner_status_cursor do
-    IF (rv.is_connected = 'disconnected') THEN
+    IF (rv.is_connected = 'disconnected' OR rv.is_connected = 'connecting') THEN
       let disconnected_exception EXCEPTION := EXCEPTION (-50008, 'Partner ' || :partnership_slug || ' is no longer connected');
       RAISE disconnected_exception;
     END IF;
@@ -734,7 +765,7 @@ BEGIN
   let partner_status_res RESULTSET := (call optable_partnership_v1.internal_schema.is_connected(:partnership_slug, :snowflake_partner_account_locator_id, :dcn_account_locator_id));
   let partner_status_cursor cursor for partner_status_res;
   for rv in partner_status_cursor do
-  IF (rv.is_connected = 'disconnected') THEN
+  IF (rv.is_connected = 'disconnected' OR rv.is_connected = 'connecting') THEN
     let disconnected_exception EXCEPTION := EXCEPTION (-50008, 'Partner ' || :partnership_slug || ' is no longer connected');
     RAISE disconnected_exception;
   END IF;
