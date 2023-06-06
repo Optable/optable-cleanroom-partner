@@ -2,7 +2,7 @@ USE ROLE accountadmin;
 CREATE DATABASE IF NOT EXISTS optable_partnership_v1;
 CREATE SCHEMA IF NOT EXISTS optable_partnership_v1.public;
 CREATE SCHEMA IF NOT EXISTS optable_partnership_v1.internal_schema;
-CREATE OR REPLACE WAREHOUSE optable_partnership_v1_setup warehouse_size=xsmall AUTO_SUSPEND=60;
+CREATE WAREHOUSE IF NOT EXISTS optable_partnership_v1_setup warehouse_size=xsmall AUTO_SUSPEND=60;
 USE WAREHOUSE optable_partnership_v1_setup;
 CREATE TABLE IF NOT EXISTS optable_partnership_v1.public.dcn_partners(org VARCHAR NOT NULL, partnership_slug VARCHAR NOT NULL, dcn_account_locator_id VARCHAR NOT NULL, snowflake_partner_role VARCHAR NOT NULL, revision VARCHAR NOT NULL);
 CREATE TABLE IF NOT EXISTS optable_partnership_v1.public.version(version VARCHAR NOT NULL);
