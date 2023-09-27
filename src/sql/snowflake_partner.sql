@@ -837,3 +837,24 @@ BEGIN
   GRANT USAGE ON SCHEMA identifier(:schema_name_full) TO ROLE identifier(:role_name);
   RETURN 'permissions granted';
 END;
+
+
+CREATE OR REPLACE PROCEDURE optable_partnership_v1.public.match_create_and_run(partner_slug VARCHAR, match_name VARCHAR, database_name VARCHAR, schema_name VARCHAR, table_name VARCHAR)
+RETURNS TABLE(status VARCHAR)
+LANGUAGE SQL
+EXECUTE AS CALLER
+AS
+BEGIN
+  call optable_partnership_v1.public.grant_permission(:partner_slug, :database_name, :schema_name);
+  let match_id VARCHAR := '';
+  let match_res RESULTSET := (call optable_partnership_v1.public.match_create(:partner_slug, :match_name));
+  let c1 cursor for match_res;
+  let source_table VARCHAR := :database_name || '.' || :schema_name || '.' || :table_name;
+
+  for match in c1 do
+    match_id := match.match_id;
+  end for;
+
+  let match_result RESULTSET := (call optable_partnership_v1.public.match_run(:partner_slug, :match_id, :source_table));
+  RETURN TABLE(match_result);
+END;
