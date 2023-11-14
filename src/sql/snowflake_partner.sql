@@ -126,6 +126,7 @@ $$
 
 CREATE OR REPLACE TASK optable_partnership_v1.internal_schema.partnership_cleanup_task
   SCHEDULE = 'USING CRON 0 1 * * * UTC'
+  SUSPEND_TASK_AFTER_NUM_FAILURES = 0
   AS
     call optable_partnership_v1.internal_schema.drop_disconnected_partners();
 
