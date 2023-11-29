@@ -226,6 +226,8 @@ BEGIN
   let dcn_partner_dcr_db VARCHAR := 'dcn_partner_' || :partnership_slug || '_' || :snowflake_partner_account_locator_id || '_' || :dcn_account_locator_id || '_dcr_db';
   let dcn_partner_dcr_shared_schema_match_attempts VARCHAR := :dcn_partner_dcr_db || '.shared_schema.match_attempts';
 
+  USE WAREHOUSE optable_partnership_v1_setup;
+
   let partner_status_res RESULTSET := (call optable_partnership_v1.internal_schema.is_connected(:partnership_slug, :snowflake_partner_account_locator_id, :dcn_account_locator_id));
   let partner_status_cursor cursor for partner_status_res;
   for rv in partner_status_cursor do
