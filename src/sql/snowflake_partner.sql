@@ -481,8 +481,6 @@ BEGIN
       INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_postal_code(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id_id5%') THEN
       INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_id5(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
-    ELSEIF (cn ILIKE 'id_utiq%') THEN
-      INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_utiq(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     ELSEIF (cn ILIKE 'id%') THEN
       INSERT INTO identifier(:snowflake_partner_source_schema_profiles) SELECT optable_partnership_v1.internal_schema.parse_id(identifier(:cn)), :match_id, :request_id FROM identifier(:source_table);
     END IF;
@@ -739,21 +737,12 @@ $$
 ;
 
 
-CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_utiq(id VARCHAR)
-RETURNS VARCHAR
-AS
-$$
-  'utiq:' || id
-$$
-;
-
-
 CREATE OR REPLACE FUNCTION optable_partnership_v1.internal_schema.parse_id(id VARCHAR)
 RETURNS VARCHAR
 AS
 $$
   CASE
-    WHEN STARTSWITH(id, 'e') OR STARTSWITH(id, 'a') OR STARTSWITH(id, 'g') OR STARTSWITH(id, 'i4') OR STARTSWITH(id, 'i6') OR STARTSWITH(id, 's') OR STARTSWITH(id, 'r') OR STARTSWITH(id, 'f') OR STARTSWITH(id, 'p') OR STARTSWITH(id, 'n') OR STARTSWITH(id, 'z') OR STARTSWITH(id, 'id5') OR STARTSWITH(id, 'utiq') THEN
+    WHEN STARTSWITH(id, 'e') OR STARTSWITH(id, 'a') OR STARTSWITH(id, 'g') OR STARTSWITH(id, 'i4') OR STARTSWITH(id, 'i6') OR STARTSWITH(id, 's') OR STARTSWITH(id, 'r') OR STARTSWITH(id, 'f') OR STARTSWITH(id, 'p') OR STARTSWITH(id, 'n') OR STARTSWITH(id, 'z') OR STARTSWITH(id, 'id5') THEN
       CASE
         WHEN STARTSWITH(id, 'e:') THEN
           CASE
